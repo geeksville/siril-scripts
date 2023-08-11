@@ -1,0 +1,29 @@
+############################################
+# Script for Siril 1.0
+# August 2020
+# (C) Cyril Richard / Colmic
+# Mono_Preprocessing_WithoutDBF v1.0
+#
+########### PREPROCESSING SCRIPT ###########
+# Script for mono camera preprocessing
+# needs 1 set of RAW images in the working
+# directory, within 1 directory:
+# lights 
+#
+############################################
+
+requires 0.99.4
+
+#preprocess lights
+cd lights
+convert light -out=../process
+cd ../process
+
+#align lights
+register light
+
+#stack lights
+stack r_light rej 3 3 -norm=addscale -output_norm -out=../result
+
+cd ..
+close

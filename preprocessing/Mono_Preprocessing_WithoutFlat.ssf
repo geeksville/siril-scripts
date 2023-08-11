@@ -1,0 +1,45 @@
+############################################
+#
+# Script for Siril 1.0
+# July 2020
+# (C) Cyril Richard
+# Mono_Preprocessing_WithoutFlat v1.0
+#
+########### PREPROCESSING SCRIPT ###########
+#
+# Script for mono camera preprocessing
+#
+# Needs 2 sets of RAW images in the working
+# directory, within 4 directories:
+#   darks/
+#   lights/
+#
+############################################
+
+requires 0.99.4
+
+# Convert Dark Frames to .fit files
+cd darks
+convert dark -out=../process
+cd ../process
+
+# Stack Dark Frames to dark_stacked.fit
+stack dark rej 3 3 -nonorm
+cd ..
+
+# Convert Light Frames to .fit files
+cd lights
+convert light -out=../process
+cd ../process
+
+# Pre-process Light Frames
+preprocess light -dark=dark_stacked
+
+# Align Lights
+register pp_light
+
+# Stack calibrated lights to result.fit
+stack r_pp_light rej 3 3 -norm=addscale -output_norm -out=../result
+
+cd ..
+close
