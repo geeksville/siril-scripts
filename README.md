@@ -1,4 +1,4 @@
-# External Utilities Script Repository
+# External Script Repository
 
 Welcome to the External Script Repository! This repository is a collection of 
 scripts contributed by users like you to enhance various stages of image 
