@@ -1,0 +1,36 @@
+############################################
+# Mar. 13, 2023
+# [DSA] Star Reduction Transfer Method v1.0
+# Script for star reduction using pixel math.
+# Requirements:
+#	StarNet++ Command Line version must be installed
+#   and configured in Siril.
+#
+# Original pixel math formula by Bill Blanshan.
+#
+# https://www.youtube.com/@DeepSpaceAstro
+#
+##############################################
+requires 1.2.0
+
+#Create a copy of the current image and open it.
+save starReduction.fit
+load starReduction.fit
+
+#Run Starnet Star Removal. No star mask.
+starnet -nostarmask
+
+#Pixel math.
+#Lower the 0.20 to reduce stars even more. Note: You need to change that in 2 places.
+pm "~((~mtf(~0.20,$starReduction$)/~mtf(~0.20,$starless_starReduction$))*~$starless_starReduction$)"
+
+#Save and open the final image.
+save reducedStars_final.fit
+load reducedStars_final.fit
+
+##############################################
+# 
+# Thanks for using Star Reduction!
+# https://www.youtube.com/@DeepSpaceAstro
+#
+##############################################
