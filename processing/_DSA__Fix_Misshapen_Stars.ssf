@@ -1,0 +1,52 @@
+############################################
+# Mar. 11, 2023
+# Rich Stevenson
+# [DSA] Fix Misshapen Stars v1.0
+# Script for fixing misshapen stars due to bad guiding, etc.
+#
+# https://www.youtube.com/@DeepSpaceAstro
+#
+##############################################
+requires 1.2.0
+
+#Create a copy of the current image and open it.
+save fixstars.fit
+load fixstars.fit
+
+#Run Starnet Star Removal. Pre-stretch applied.
+starnet -stretch
+
+#Open the starmask
+load starmask_fixstars.fit
+
+#Configure settings for and run findstar.
+setfindstar -roundness=0.10
+findstar
+
+#Run Full Resynthesis to fix the stars.
+synthstar
+
+#Add Gaussian blur to the starmask.
+gauss 1.2
+
+#Save the starmask.
+save starmask_fixstars.fit
+
+#Combine the starless and starmask images using pixel math.
+pm "$starmask_fixstars$ + 0.02 * $starless_fixstars$"
+
+#Save final image and open it.
+save fixstars.fit
+load fixstars.fit
+
+######################################################################
+#   ___                 ____                    ___       __         #
+#  / _ \___ ___ ___    / __/__  ___ ________   / _ | ___ / /________ #
+# / // / -_) -_) _ \  _\ \/ _ \/ _ `/ __/ -_) / __ |(_-</ __/ __/ _ \#
+#/____/\__/\__/ .__/ /___/ .__/\_,_/\__/\__/ /_/ |_/___/\__/_/  \___/#
+#            /_/        /_/                                          #
+#                                                                    #
+# YouTube https://www.youtube.com/@DeepSpaceAstro                    #
+# FaceBook https://www.facebook.com/DeepSpaceAstro/                  #
+# TikTok https://www.tiktok.com/@DeepSpaceAstro                      # 
+######################################################################
