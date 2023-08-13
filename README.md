@@ -51,7 +51,7 @@ Requests. Your contributions can span either category—pre-processing or
 processing—as long as they bring value and relevance to the table.
 
 To submit your script, follow these steps:
-1. Fork this repository to your GitHub account.
+1. Fork this repository to your gitlab account.
 2. Create a new branch for your script.
 3. Add your script to the appropriate category directory.
 4. Commit your changes and push them to your fork.
