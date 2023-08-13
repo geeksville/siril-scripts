@@ -1,51 +1,63 @@
 ############################################
-# Script for Siril 1.0
-# August 2020
-# (C) Cyril Richard / Colmic
-# OSC_startrail v1.0
+# Script for Siril 1.2
+# August 2023
+# (C) Cyril Richard
+# OSC_startrail v1.1
 #
 ########### PREPROCESSING SCRIPT ###########
 # Script for color camera preprocessing
-# needs 4 sets of RAW images in the working
+# Needs 4 sets of RAW images in the working
 # directory, within 4 directories:
-# biases, flats, darks and lights 
+#   biases/
+#   flats/
+#   darks/
+#   lights/
+# Saves masters to ./masters/
 #
 ############################################
 
-requires 0.99.4
+requires 1.2.0
 
-#build master-bias
+# Convert Bias Frames to .fit files
 cd biases
 convert bias -out=../process
 cd ../process
-stack bias rej 3 3 -nonorm
+
+# Stack Bias Frames to bias_stacked.fit
+stack bias rej 3 3 -nonorm -out=../masters/bias_stacked
 cd ..
 
-#preprocess flats
+# Convert Flat Frames to .fit files
 cd flats
 convert flat -out=../process
 cd ../process
-preprocess flat -bias=bias_stacked
 
-#build master-flat
-stack pp_flat rej 3 3 -norm=mul
+# Calibrate Flat Frames
+calibrate flat -bias=../masters/bias_stacked
+
+# Stack Flat Frames to pp_flat_stacked.fit
+stack pp_flat rej 3 3 -norm=mul -out=../masters/pp_flat_stacked
 cd ..
 
-#build master-dark
+# Convert Dark Frames to .fit files
 cd darks
 convert dark -out=../process
 cd ../process
-stack dark rej 3 3 -nonorm
+
+# Stack Dark Frames to dark_stacked.fit
+stack dark rej 3 3 -nonorm -out=../masters/dark_stacked
 cd ..
 
-#preprocess lights
+# Convert Light Frames to .fit files
 cd lights
 convert light -out=../process
 cd ../process
-preprocess light -dark=dark_stacked -flat=pp_flat_stacked -cfa -equalize_cfa -debayer
 
-#stack calibrated lights
-stack pp_light max -output_norm -out=../result
+# Calibrate Light Frames
+calibrate light -dark=../masters/dark_stacked -flat=../masters/pp_flat_stacked -cc=dark -cfa -equalize_cfa -debayer
+
+# Stack calibrated lights to result.fit
+stack pp_light max -output_norm -out=../result_$LIVETIME:%d$s
 
 cd ..
 close
