@@ -1,0 +1,78 @@
+#######################################################
+# July. 07, 2023
+# [DSA] OSC_Preprocessing with Master Dark & Bias v1.0
+# 
+# Modified OSC_Preprocessing script to allow the use 
+# of a master dark & master bias files during
+# automatic calibration & stacking of images.
+#
+# Original OSC_Preprocessing v1.3 script by:
+# Cyril Richard
+#
+# How to use this script: 
+# https://youtu.be/JmvA9Jw8xOo
+#
+########### PREPROCESSING SCRIPT #####################
+#
+# Create the following folder structure in your
+# working directory:
+#
+#   flats
+#     Copy your flats files to this folder
+#   lights
+#     Copy your lights files to this folder
+#   masters
+#     Copy your master dark & bias files to this
+#     folder, and rename the files to dark_stacked
+#     & bias_stacked
+#
+######################################################
+
+requires 1.2.0
+
+# Convert Flat Frames to .fit files
+cd flats
+convert flat -out=../process
+cd ../process
+
+# Calibrate Flat Frames
+calibrate flat -bias=../masters/bias_stacked
+
+# Stack Flat Frames to pp_flat_stacked.fit
+stack pp_flat rej 3 3 -norm=mul -out=../masters/pp_flat_stacked
+cd ..
+
+# Convert Light Frames to .fit files
+cd lights
+convert light -out=../process
+cd ../process
+
+# Calibrate Light Frames
+calibrate light -dark=../masters/dark_stacked -flat=../masters/pp_flat_stacked -cc=dark -cfa -equalize_cfa -debayer
+
+# Align lights
+register pp_light
+
+# Stack calibrated lights to result.fit
+stack r_pp_light rej 3 3 -norm=addscale -output_norm -rgb_equal -out=result
+
+# Flip if required
+load result
+mirrorx -bottomup
+save ../result_$LIVETIME:%d$s
+
+cd ..
+close
+
+######################################################################
+#   ___                 ____                    ___       __         #
+#  / _ \___ ___ ___    / __/__  ___ ________   / _ | ___ / /________ #
+# / // / -_) -_) _ \  _\ \/ _ \/ _ `/ __/ -_) / __ |(_-</ __/ __/ _ \#
+#/____/\__/\__/ .__/ /___/ .__/\_,_/\__/\__/ /_/ |_/___/\__/_/  \___/#
+#            /_/        /_/                                          #
+#                                                                    #
+# YouTube https://www.youtube.com/@DeepSpaceAstro                    #
+# Instagram https://www.instagram.com/deepspaceastro_official/       #
+# FaceBook https://www.facebook.com/DeepSpaceAstro/                  #
+# TikTok https://www.tiktok.com/@DeepSpaceAstro                      # 
+######################################################################
