@@ -9,7 +9,8 @@
 #
 # Original pixel math formula by Bill Blanshan.
 #
-# https://www.youtube.com/@DeepSpaceAstro
+# How to use this script: 
+# https://youtu.be/Na6GzKozpCI
 #
 ##############################################
 requires 1.2.0
@@ -37,6 +38,7 @@ load reducedStars_final.fit
 #            /_/        /_/                                          #
 #                                                                    #
 # YouTube https://www.youtube.com/@DeepSpaceAstro                    #
+# Instagram https://www.instagram.com/deepspaceastro_official/       #
 # FaceBook https://www.facebook.com/DeepSpaceAstro/                  #
 # TikTok https://www.tiktok.com/@DeepSpaceAstro                      # 
 ######################################################################
