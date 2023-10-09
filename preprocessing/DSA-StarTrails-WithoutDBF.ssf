@@ -1,0 +1,45 @@
+############################################
+# Oct. 9, 2023
+# DSA-StarTrails-WithoutDBF v1.0
+#
+# Modified OSC_startrail script to create star trails
+# without calibration frames (darks, biases, flats)
+#
+# Original OSC_Startrail v1.1 script by:
+# Cyril Richard
+########### PREPROCESSING SCRIPT ###########
+# Create the following folder in your
+# working directory:
+#
+#   lights
+#     Copy your lights files to this folder
+############################################
+
+requires 1.2.0
+
+# Convert Light Frames to .fit files
+cd lights
+convert light -out=../process
+cd ../process
+
+# Calibrate Light Frames
+calibrate light -cfa -equalize_cfa -debayer
+
+# Stack calibrated lights to result.fit
+stack pp_light max -output_norm -out=../result_$LIVETIME:%d$s
+
+cd ..
+close
+
+######################################################################
+#   ___                 ____                    ___       __         #
+#  / _ \___ ___ ___    / __/__  ___ ________   / _ | ___ / /________ #
+# / // / -_) -_) _ \  _\ \/ _ \/ _ `/ __/ -_) / __ |(_-</ __/ __/ _ \#
+#/____/\__/\__/ .__/ /___/ .__/\_,_/\__/\__/ /_/ |_/___/\__/_/  \___/#
+#            /_/        /_/                                          #
+#                                                                    #
+# YouTube https://www.youtube.com/@DeepSpaceAstro                    #
+# Instagram https://www.instagram.com/deepspaceastro_official/       #
+# FaceBook https://www.facebook.com/DeepSpaceAstro/                  #
+# TikTok https://www.tiktok.com/@DeepSpaceAstro                      # 
+######################################################################
