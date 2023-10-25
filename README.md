@@ -57,6 +57,8 @@ To submit your script, follow these steps:
 4. Commit your changes and push them to your fork.
 5. Open a Merge Request detailing the purpose and functionality of your script.
 
+**It is not necessary to apply to join the FA / siril-scripts project or to have special permission. Simply opening a merge request on your fork is enough.**
+
 Our team will review your submission and determine its relevance to the repository's 
 goals. If your script aligns with our objectives, we'll gladly merge it into the 
 repository, giving you credit for your valuable contribution.
