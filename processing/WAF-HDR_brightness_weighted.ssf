@@ -3,7 +3,7 @@
 # Script for Siril 1.2
 # February 2024
 # (C) WA (Bill) Flowers
-# WAF-HDR_brightness_weighted v1.0
+# WAF-HDR_brightness_weighted v1.1
 #
 # The work is based on a description of how to do this with layers in GIMP
 #   https://www.instructables.com/HDR-photos-with-the-GIMP/
@@ -56,4 +56,5 @@ rgbcomp Llong Llong Llong -out=Wlong
 # however having the intermediate output file (HDRsm) is a useful check on the results
 # and does not add significantly to the execution time
 pm "$Wlong$ * $HDRsm$ + ~$Wlong$ * $r_HDRin_00001$"
-save ../HDR
+cd ..
+save HDR
