@@ -3,7 +3,13 @@
 # Script for Siril 1.2
 # February 2024
 # (C) WA (Bill) Flowers
-# WAF-HDR_brightness_weighted v1.1
+# WAF-HDR_brightness_weighted v2.0
+#
+# Version 2 brings out more detail in bright regions and also in dim sections
+# It appears that best results are obtained if the background is color corrected
+# and green noise is removed before applying the script.
+# However it will work on unprocessed images and produce a reasonable result.
+# Try it both ways to see what you like best.
 #
 # The work is based on a description of how to do this with layers in GIMP
 #   https://www.instructables.com/HDR-photos-with-the-GIMP/
@@ -12,9 +18,9 @@
 # In an empty directory put images named short, medium and long
 # representing short exposure to bring out bright details,
 # medium exposure for mid-range features
-# and long exposure to bring out dim features
+# and long exposure to bring out dim features.
 # They will be aligned, cropped and blended
-# using brightness-weighted HDR compositing
+# using brightness-weighted HDR compositing.
 
 requires 1.2.0
 
@@ -34,11 +40,17 @@ seqapplyreg HDRin_ -framing=min
 
 # get CieLAB luminance for long and short as Llong and Lshort
 # a and b are ignored
-load r_HDRin_00001.fit
+load r_HDRin_00001
 split Llong a b -lab
+load Llong
+autostretch
+save Llong
 
-load r_HDRin_00003.fit
+load r_HDRin_00003
 split Lshort a b -lab
+load Lshort
+autostretch
+save Lshort
 
 # compose Lshort into 3 (RGB) layers as the short exposure weight
 rgbcomp Lshort Lshort Lshort -out=Wshort
