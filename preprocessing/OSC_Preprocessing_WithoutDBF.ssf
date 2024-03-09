@@ -2,7 +2,7 @@
 # Script for Siril 1.0
 # August 2020
 # (C) Cyril Richard / Colmic
-# OSC_Preprocessing_WithoutDBF v1.0
+# OSC_Preprocessing_WithoutDBF v1.1
 #
 ########### PREPROCESSING SCRIPT ###########
 # Script for color camera preprocessing
@@ -12,7 +12,7 @@
 #
 ############################################
 
-requires 0.99.4
+requires 1.2.0
 
 #calibrate lights
 cd lights

@@ -3,7 +3,7 @@
 # Script for Siril 1.0
 # July 2020
 # (C) Cyril Richard
-# Mono_Preprocessing_WithoutDark v1.0
+# Mono_Preprocessing_WithoutDark v1.1
 #
 ########### PREPROCESSING SCRIPT ###########
 #
@@ -17,7 +17,7 @@
 #
 ############################################
 
-requires 0.99.4
+requires 1.2
 
 # Convert Bias Frames to .fit files
 cd biases
@@ -34,7 +34,7 @@ convert flat -out=../process
 cd ../process
 
 # Pre-process Flat Frames
-preprocess flat -bias=bias_stacked
+calibrate flat -bias=bias_stacked
 
 # Stack Flat Frames to pp_flat_stacked.fit
 stack pp_flat rej 3 3 -norm=mul
@@ -46,7 +46,7 @@ convert light -out=../process
 cd ../process
 
 # Pre-process Light Frames
-preprocess light -bias=bias_stacked -flat=pp_flat_stacked
+calibrate light -bias=bias_stacked -flat=pp_flat_stacked
 
 # Align Lights
 register pp_light
