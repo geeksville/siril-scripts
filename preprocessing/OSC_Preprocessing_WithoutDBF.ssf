@@ -14,11 +14,11 @@
 
 requires 0.99.4
 
-#preprocess lights
+#calibrate lights
 cd lights
 convert light -out=../process
 cd ../process
-preprocess light -debayer
+calibrate light -debayer
 
 #align lights
 register pp_light
