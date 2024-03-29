@@ -1,0 +1,50 @@
+############################################
+#
+# Script for Siril 1.2
+# March 2024
+# (C) Cyril Richard
+# SeeStar_Preprocessing v1.0
+#
+########### PREPROCESSING SCRIPT ###########
+#
+# Script for Seestar Deep Sky images where 
+# darks, flats biases are not provided. Only 
+# lights are needed.
+#
+# Please, REMOVE all jpg files from the
+# directory.
+#
+# If you find that too many images are discarded
+# before stacking, you can increase the value after
+# -filter-round= in the seqapplyreg command, line 39
+#
+# Needs 1 set of RAW images in the working
+# directory, within 1 directory:
+#   lights/
+#
+############################################
+
+requires 1.2.0
+
+# Convert Light Frames to .fit files
+cd lights
+convert light -out=../process
+cd ../process
+
+# Calibrate Light Frames
+calibrate light -debayer
+
+# Align lights
+register pp_light -2pass
+seqapplyreg pp_light -filter-round=2.5k
+
+# Stack calibrated lights to result.fit
+stack r_pp_light rej 3 3 -norm=addscale -output_norm -rgb_equal -out=result
+
+# flip if required
+mirrorx_single result
+
+#save result using FITS keywords for the name
+load result
+save ../$OBJECT:%s$_$STACKCNT:%d$x$EXPTIME:%d$sec_T$CCD-TEMP:%d$°C_$DATE-OBS:dm12$
+close
