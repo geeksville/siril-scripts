@@ -1,9 +1,9 @@
 ############################################
 #
 # Script for Siril 1.2
-# March 2024
+# June 2024
 # (C) Cyril Richard
-# SeeStar_Preprocessing v1.0
+# SeeStar_Preprocessing v1.1
 #
 ########### PREPROCESSING SCRIPT ###########
 #
@@ -46,5 +46,5 @@ mirrorx_single result
 
 #save result using FITS keywords for the name
 load result
-save ../$OBJECT:%s$_$STACKCNT:%d$x$EXPTIME:%d$sec_T$CCD-TEMP:%d$°C_$DATE-OBS:dm12$
+save ../$OBJECT:%s$_$STACKCNT:%d$x$EXPTIME:%d$sec_T$CCD-TEMP:%d$degC_$DATE-OBS:dm12$
 close
