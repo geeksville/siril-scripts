@@ -3,7 +3,7 @@
 # Script for Siril 1.2
 # June 2024
 # (C) Cyril Richard
-# SeeStar_Preprocessing v1.1
+# SeeStar_Preprocessing v1.2
 #
 ########### PREPROCESSING SCRIPT ###########
 #
@@ -22,13 +22,15 @@
 # directory, within 1 directory:
 #   lights/
 #
+# Changelog
+# 1.2 : using link instead of convert
 ############################################
 
 requires 1.2.0
 
 # Convert Light Frames to .fit files
 cd lights
-convert light -out=../process
+link light -date -out=../process
 cd ../process
 
 # Calibrate Light Frames
