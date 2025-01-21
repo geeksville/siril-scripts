@@ -202,9 +202,6 @@ class CosmicClarityInterface:
             if not self.use_gpu_var.get():
                 command.append("--disable_gpu")
 
-            import locale
-            system_encoding = locale.getpreferredencoding(False)
-
             process = await asyncio.create_subprocess_exec(
                 *command,
                 stdout=subprocess.PIPE,
@@ -216,7 +213,7 @@ class CosmicClarityInterface:
                 chunk = await process.stdout.read(80)
                 if not chunk:
                     break
-                buffer += chunk.decode(system_encoding, errors='replace')
+                buffer += chunk.decode('utf-8', errors='ignore')
 
                 lines = buffer.split('\r')
                 for line in lines[:-1]:
@@ -231,7 +228,7 @@ class CosmicClarityInterface:
             await process.wait()
             if process.returncode != 0:
                 stderr = await process.stderr.read()
-                error_message = stderr.decode(system_encoding, errors='replace')
+                error_message = stderr.decode('utf-8', errors='ignore')
                 raise subprocess.CalledProcessError(
                     process.returncode,
                     executable_path,
