@@ -224,6 +224,9 @@ class SirilCosmicClarityInterface:
             if not self.use_gpu_var.get():
                 command.append("--disable_gpu")
 
+            import locale
+            system_encoding = locale.getpreferredencoding(False)
+
             process = await asyncio.create_subprocess_exec(
                 *command,
                 stdout=subprocess.PIPE,
@@ -236,7 +239,7 @@ class SirilCosmicClarityInterface:
                 if not chunk:
                     break
 
-                buffer += chunk.decode()
+                buffer += chunk.decode(system_encoding, errors='replace')
                 lines = buffer.split('\r')
 
                 for line in lines[:-1]:
@@ -254,10 +257,11 @@ class SirilCosmicClarityInterface:
 
             if process.returncode != 0:
                 stderr = await process.stderr.read()
+                error_message = stderr.decode(system_encoding, errors='replace')
                 raise subprocess.CalledProcessError(
                     process.returncode,
                     executable_path,
-                    stderr.decode()
+                    error_message
                 )
 
             return True
