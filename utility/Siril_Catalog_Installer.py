@@ -21,7 +21,6 @@ import bz2
 import hashlib
 import math
 import os
-import requests
 import shutil
 import subprocess
 import sys
@@ -30,9 +29,9 @@ from tkinter import ttk, filedialog, messagebox
 import urllib.request
 import numpy as np
 
-s.ensure_installed("healpy", "matplotlib", "ttkthemes")
+s.ensure_installed("healpy", "matplotlib", "requests", "ttkthemes")
+import requests
 import healpy as hp
-
 from ttkthemes import ThemedTk
 
 class SirilCatInstallerInterface:
