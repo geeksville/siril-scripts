@@ -552,7 +552,7 @@ plt.show()
 
     # Execute the script in a subprocess
     process = subprocess.run(
-        ["python3", "-c", script],  # Run the script as a string
+        [sys.executable, "-c", script],  # Run the script as a string
         text=True,
         capture_output=True
     )
