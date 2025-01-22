@@ -140,11 +140,11 @@ class SirilCatInstallerInterface:
         area_combo = ttk.Combobox(
             area_frame,
             textvariable=self.area_var,
-            values=["Galaxy season", "Milky Way", "Summer Triangle", "Magellanic Clouds"],
+            values=["Galaxy Season", "Summer Triangle", "Magellanic Clouds"],
             state="readonly",
             width=20
         )
-        self.area_var.set("Milky Way")
+        self.area_var.set("Galaxy Season")
         area_combo.pack(side=tk.LEFT, padx=10)
         tksiril.create_tooltip(area_combo, "Select the area of interest for the SPCC catalog. This will install "
                                "only chunks covering the area of interest")
@@ -484,6 +484,16 @@ def get_visible_healpix(latitude, min_elevation):
         visible_pixels = np.intersect1d(visible_pixels, south_visible)
 
     return visible_pixels.tolist()
+
+def get_area_of_interest(area):
+    if area == "Galaxy Season":
+        return [5,8,10,24,25,26,27]
+    elif area == "Magellanic Clouds":
+        return [32,33,36,38]
+    elif area == "Summer Triangle":
+        return [9,12,13,14,15,29,31]
+    else:
+        return []
 
 def plot_visible_pixels(visible_pixels, nside=2):
     """
