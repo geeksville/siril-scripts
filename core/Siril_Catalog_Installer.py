@@ -29,9 +29,11 @@ from tkinter import ttk, filedialog, messagebox
 import urllib.request
 import numpy as np
 
-s.ensure_installed("healpy", "matplotlib", "requests", "ttkthemes")
+s.ensure_installed("astropy", "astropy_healpix", "matplotlib", "requests", "ttkthemes")
+from astropy.coordinates import SkyCoord
+import astropy.units as u
+from astropy_healpix import HEALPix
 import requests
-import healpy as hp
 from ttkthemes import ThemedTk
 
 class SirilCatInstallerInterface:
@@ -444,7 +446,7 @@ def calculate_colatitude(latitude_deg, elevation_deg):
 
 def get_visible_healpix(latitude, min_elevation):
     """
-    Compute HEALPix level 2 pixel numbers visible above minimum elevation,
+    Compute HEALPix level 1 pixel numbers visible above minimum elevation,
     accounting for regions near either pole that may never reach the minimum elevation.
 
     Parameters:
@@ -460,38 +462,38 @@ def get_visible_healpix(latitude, min_elevation):
         List of unique NEST HEALPix pixel numbers for level 1.
     """
     colatitude, excl_north, excl_south = calculate_colatitude(latitude, min_elevation)
-    vec_north_pole = [0, 0, 1]
-    vec_south_pole = [0, 0, -1]
     nside = 2
+    healpix = HEALPix(nside=nside, order='nested', frame='icrs')
+
+    # Convert colatitude to radius (in degrees)
+    colatitude_deg = u.Quantity(colatitude, u.radian).to(u.deg)
 
     # Determine which pole to start from based on observer's hemisphere
     if latitude >= 0:
-        primary_pole = vec_north_pole
+        primary_lon = 0 * u.deg
+        primary_lat = 90 * u.deg
         primary_excl = excl_north
     else:
-        primary_pole = vec_south_pole
+        primary_lon = 0 * u.deg
+        primary_lat = -90 * u.deg
         primary_excl = excl_south
 
     # Get visible pixels from primary search
-    visible_pixels = hp.query_disc(nside, primary_pole, colatitude,
-                                 inclusive=True, nest=True)
+    visible_pixels = healpix.cone_search_lonlat(primary_lon, primary_lat, colatitude_deg)
 
     # Check northern exclusion if it exists
     if excl_north is not None:
-        north_visible = hp.query_disc(nside, vec_north_pole,
-                                    excl_north,
-                                    inclusive=True, nest=True)
+        excl_north_deg = u.Quantity(excl_north, u.radian).to(u.deg)
+        north_visible = healpix.cone_search_lonlat(0 * u.deg, 90 * u.deg, excl_north_deg)
         visible_pixels = np.intersect1d(visible_pixels, north_visible)
 
     # Check southern exclusion if it exists
     if excl_south is not None:
-        south_visible = hp.query_disc(nside, vec_south_pole,
-                                    excl_south,
-                                    inclusive=True, nest=True)
+        excl_south_deg = u.Quantity(excl_south, u.radian).to(u.deg)
+        south_visible = healpix.cone_search_lonlat(0 * u.deg, -90 * u.deg, excl_south_deg)
         visible_pixels = np.intersect1d(visible_pixels, south_visible)
 
     return visible_pixels.tolist()
-
 def get_area_of_interest(area):
     if area == "Galaxy Season":
         return [5,8,10,24,25,26,27]
