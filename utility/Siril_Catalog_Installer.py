@@ -312,6 +312,7 @@ class SirilCatInstallerInterface:
 
     def install_spcc(self):
         pixels = self.get_pixels_from_ui()
+        print(f"Installing the following Level 1 HEALpixels: {pixels}")
         chunks = []
         for pixel in pixels:
             catfile = f"siril_cat{SPCC_CHUNKLEVEL}_healpix{SPCC_INDEXLEVEL}_xpsamp_{pixel}.dat.bz2"
@@ -321,7 +322,7 @@ class SirilCatInstallerInterface:
             sha256sum_url = f"{bz2_url}.sha256sum"
 
             # Set target dir
-            target_dir = os.path.join(self.siril.get_siril_datadir(), f"siril_cat{SPCC_CHUNKLEVEL}_healpix{SPCC_INDEXLEVEL}_xpsamp")
+            target_dir = os.path.join(self.siril.get_siril_userdatadir(), f"siril_cat{SPCC_CHUNKLEVEL}_healpix{SPCC_INDEXLEVEL}_xpsamp")
 
             # Ensure the target directory exists
             os.makedirs(target_dir, exist_ok=True)
