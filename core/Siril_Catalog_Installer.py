@@ -139,7 +139,7 @@ class SirilCatInstallerInterface:
         area_combo = ttk.Combobox(
             area_frame,
             textvariable=self.area_var,
-            values=["Galaxy Season", "Summer Triangle", "Magellanic Clouds"],
+            values=["Galaxy Season", "Magellanic Clouds", "Milky Way", "Orion to Taurus", "Summer Triangle"],
             state="readonly",
             width=20
         )
@@ -499,6 +499,10 @@ def get_area_of_interest(area):
         return [32,33,36,38]
     elif area == "Summer Triangle":
         return [9,12,13,14,15,29,31]
+    elif area == "Milky Way":
+        return [0,1,2,3,12,13,16,17,18,19,28,29,30,36,37,40,41,42,43,45,46,47]
+    elif area == "Orion to Taurus":
+        return [0,1,6,20,21,22,23]
     else:
         return []
 
