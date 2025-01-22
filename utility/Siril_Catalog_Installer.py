@@ -238,8 +238,31 @@ class SirilCatInstallerInterface:
 
                 # Calculate progress percentage and display it
                 progress = processed_size / total_size
-                self.siril.update_progress("Decompressing...", progress)
+                if progress > 0.99:
+                    self.siril.update_progress("Decompressing... (nearly done!)", progress)
+                else:
+                    self.siril.update_progress("Decompressing...", progress)
         self.siril.reset_progress()
+
+    def verify_sha256sum(self, bz2_path, sha256sum_path):
+        # Read the expected SHA256 checksum from the .sha256sum file
+        with open(sha256sum_path, 'r') as f:
+            expected_checksum = f.read().split()[0]
+
+        # Calculate the SHA256 checksum of the downloaded .bz2 file
+        sha256_hash = hashlib.sha256()
+        with open(bz2_path, 'rb') as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                sha256_hash.update(chunk)
+        actual_checksum = sha256_hash.hexdigest()
+
+        # Verify the checksum
+        if actual_checksum != expected_checksum:
+            print(f"Checksum verification failed. Expected {expected_checksum}, got {actual_checksum}")
+            return False
+        else:
+            print("Checksum verfication succeeded.")
+            return True
 
     def install_astrometry(self):
         # URLs of the files to download
@@ -254,11 +277,6 @@ class SirilCatInstallerInterface:
         # Ensure the target directory exists
         os.makedirs(target_dir, exist_ok=True)
 
-        # Download the .bz2 file with progress reporting
-        bz2_path = os.path.join(target_dir, catfile)
-        print(f"Downloading {bz2_url} to {bz2_path}...")
-        self.download_with_progress(bz2_url, bz2_path)
-
         # Download the .sha256sum file
         sha256sum_path = os.path.join(target_dir, shasumfile)
         print(f"Downloading {sha256sum_url} to {sha256sum_path}...")
@@ -266,22 +284,18 @@ class SirilCatInstallerInterface:
         with open(sha256sum_path, 'wb') as f:
             f.write(response.content)
 
-        # Read the expected SHA256 checksum from the .sha256sum file
-        with open(sha256sum_path, 'r') as f:
-            expected_checksum = f.read().split()[0]
-
-        # Calculate the SHA256 checksum of the downloaded .bz2 file
-        sha256_hash = hashlib.sha256()
-        with open(bz2_path, 'rb') as f:
-            for chunk in iter(lambda: f.read(8192), b""):
-                sha256_hash.update(chunk)
-        actual_checksum = sha256_hash.hexdigest()
-
-        # Verify the checksum
-        if actual_checksum != expected_checksum:
-            raise ValueError(f"Checksum verification failed. Expected {expected_checksum}, got {actual_checksum}")
+        # Does the compressed archive already exist? If so, check the checksum
+        # If it doesn't exist or the checksum is invalid, download again
+        bz2_path = os.path.join(target_dir, catfile)
+        if os.path.exists(bz2_path) and self.verify_sha256sum(bz2_path, sha256sum_path):
+            print("Existing archive found with valid checksum...")
         else:
-            print("Checksum verfication succeeded.")
+            # Download the .bz2 file with progress reporting
+            print(f"Downloading {bz2_url} to {bz2_path}...")
+            self.download_with_progress(bz2_url, bz2_path)
+            if not self.verify_sha256sum(bz2_path, sha256sum_path):
+                print("Checksum verification error, unable to proceed.")
+                return
 
         # Determine the decompressed file path by removing the .bz2 extension
         decompressed_filename = os.path.basename(bz2_path).rsplit('.bz2', 1)[0]
@@ -297,11 +311,59 @@ class SirilCatInstallerInterface:
         print("Installation completed successfully.")
 
     def install_spcc(self):
+        pixels = self.get_pixels_from_ui()
+        chunks = []
+        for pixel in pixels:
+            catfile = f"siril_cat{SPCC_CHUNKLEVEL}_healpix{SPCC_INDEXLEVEL}_xpsamp_{pixel}.dat.bz2"
+            chunks.append(catfile)
+            shasumfile = f"{catfile}.sha256sum"
+            bz2_url = f"https://zenodo.org/records/{SPCC_RECORD}/files/{catfile}"
+            sha256sum_url = f"{bz2_url}.sha256sum"
+
+            # Set target dir
+            target_dir = os.path.join(self.siril.get_siril_datadir(), f"siril_cat{SPCC_CHUNKLEVEL}_healpix{SPCC_INDEXLEVEL}_xpsamp")
+
+            # Ensure the target directory exists
+            os.makedirs(target_dir, exist_ok=True)
+
+            # Download the .sha256sum file
+            sha256sum_path = os.path.join(target_dir, shasumfile)
+            print(f"Downloading {sha256sum_url} to {sha256sum_path}...")
+            response = requests.get(sha256sum_url)
+            with open(sha256sum_path, 'wb') as f:
+                f.write(response.content)
+
+            # Does the compressed archive already exist? If so, check the checksum
+            # If it doesn't exist or the checksum is invalid, download again
+            bz2_path = os.path.join(target_dir, catfile)
+            if os.path.exists(bz2_path) and self.verify_sha256sum(bz2_path, sha256sum_path):
+                print("Existing archive found with valid checksum...")
+            else:
+                # Download the .bz2 file with progress reporting
+                print(f"Downloading {bz2_url} to {bz2_path}...")
+                self.download_with_progress(bz2_url, bz2_path)
+                if not self.verify_sha256sum(bz2_path, sha256sum_path):
+                    print(f"Checksum verification error for {bz2_path}, skipping HEALpixel {pixel}.")
+                    continue
+ 
+            # Determine the decompressed file path by removing the .bz2 extension
+            decompressed_filename = os.path.basename(bz2_path).rsplit('.bz2', 1)[0]
+            decompressed_path = os.path.join(target_dir, decompressed_filename)
+            # Decompress the .bz2 file
+            self.decompress_with_progress(bz2_path, decompressed_path)
+
+            # Clean up: remove the compressed archive and checksum file
+            print("Cleaning up...")
+            os.remove(bz2_path)
+            os.remove(sha256sum_path)
+            print(f"{decompressed_path} installed successfully.")
+
+
         return
 
     def preview_coverage(self):
-        visible = self.get_pixels_from_ui()
-        plot_visible_pixels(visible)
+        pixels = self.get_pixels_from_ui()
+        plot_visible_pixels(pixels)
         return
 
 def calculate_colatitude(latitude_deg, elevation_deg):
