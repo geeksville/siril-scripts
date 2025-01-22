@@ -314,6 +314,7 @@ class SirilCatInstallerInterface:
         pixels = self.get_pixels_from_ui()
         print(f"Installing the following Level 1 HEALpixels: {pixels}")
         chunks = []
+        error = 0
         for pixel in pixels:
             catfile = f"siril_cat{SPCC_CHUNKLEVEL}_healpix{SPCC_INDEXLEVEL}_xpsamp_{pixel}.dat.bz2"
             chunks.append(catfile)
@@ -344,7 +345,8 @@ class SirilCatInstallerInterface:
                 print(f"Downloading {bz2_url} to {bz2_path}...")
                 self.download_with_progress(bz2_url, bz2_path)
                 if not self.verify_sha256sum(bz2_path, sha256sum_path):
-                    print(f"Checksum verification error for {bz2_path}, skipping HEALpixel {pixel}.")
+                    print(f"Checksum verification error for {bz2_path}, skipping HEALpixel {pixel}.", file=sys.stderr)
+                    error = 1
                     continue
  
             # Determine the decompressed file path by removing the .bz2 extension
@@ -358,6 +360,11 @@ class SirilCatInstallerInterface:
             os.remove(bz2_path)
             os.remove(sha256sum_path)
             print(f"{decompressed_path} installed successfully.")
+
+        if not error:
+            print("Installation complete, all files installed successfully.")
+        else:
+            print("Installation complete but not all files installed successfully. Please review the error messages", file=sys.stderr)
 
 
         return
