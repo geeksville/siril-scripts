@@ -1360,10 +1360,14 @@ def update_visible_constellations_np(ax, fig, preprocessed_data):
     # Attach the callback to the figure's rotation
     fig.canvas.mpl_connect('motion_notify_event', on_view_change)
 
+import numpy as np
+
 def is_visible_from_camera_vectorized(camera_direction, points):
-    x, y, z = points[:, 0], points[:, 1], points[:, 2]
-    cx, cy, cz = camera_direction
-    return (x * cx + y * cy + z * cz) > 0  # Example dot product logic for visibility
+    # Compute dot products of camera_direction with each point
+    dot_products = np.dot(points, camera_direction)
+
+    # Return a boolean array where the dot product is positive
+    return dot_products > 0
 
 def get_viewing_direction(ax):
     azim = np.radians(ax.azim)  # Azimuth angle in radians
@@ -1412,7 +1416,7 @@ ax.plot(x_eq, y_eq, z_eq, 'r', linewidth=1, label='Celestial Equator', zorder=4)
 
 # Add North Celestial Pole (NCP)
 # NCP is at latitude = 90° (pi/2 radians)
-x_ncp, y_ncp, z_ncp = spherical_to_cartesian(0, np.pi/2, 1.1)
+x_ncp, y_ncp, z_ncp = spherical_to_cartesian(0, np.pi/2, 1.1) # Slightly above the sphere for visibility
 ax.scatter(x_ncp, y_ncp, z_ncp, color='red', s=100, marker='*', label='NCP', zorder=2)
 
 constellation_data = get_constellation_data()
