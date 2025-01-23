@@ -172,7 +172,7 @@ class SirilCatInstallerInterface:
          # Buttons
         spcc_button_frame = ttk.Frame(spcc_frame)
         spcc_button_frame.pack(fill=tk.X, pady=5)
-        
+
         # Preview button for HEALpixel coverage
         healpix_btn = ttk.Button(
             spcc_button_frame,
@@ -182,7 +182,7 @@ class SirilCatInstallerInterface:
         )
         healpix_btn.pack(side=tk.LEFT, padx=5)
         tksiril.create_tooltip(healpix_btn, "Preview HEALpix coverage")
-        
+
         # Install button for SPCC
         spcc_install_btn = ttk.Button(
             spcc_button_frame,
@@ -349,7 +349,7 @@ class SirilCatInstallerInterface:
                     print(f"Checksum verification error for {bz2_path}, skipping HEALpixel {pixel}.", file=sys.stderr)
                     error = 1
                     continue
- 
+
             # Determine the decompressed file path by removing the .bz2 extension
             decompressed_filename = os.path.basename(bz2_path).rsplit('.bz2', 1)[0]
             decompressed_path = os.path.join(target_dir, decompressed_filename)
@@ -1305,26 +1305,66 @@ def get_constellation_data():
         (-15.3839, 17.6261, -12.8343, 17.3473),
     ]
 
-# Update the plot_constellations function to include the visibility check
-def plot_constellations(ax):
-    arcs = get_constellation_data()
-    for dec1, ra1, dec2, ra2 in arcs:
-        # Convert RA/Dec from degrees to radians
-        ra1_rad, dec1_rad = ra1 * 15 * np.pi / 180, dec1 * np.pi / 180
-        ra2_rad, dec2_rad = ra2 * 15 * np.pi / 180, dec2 * np.pi / 180
+def update_visible_constellations(ax, fig, constellation_data):
+    def on_view_change(event=None):
+        # Clear the existing constellation lines
+        for line in ax.lines:
+            line.remove()
 
-        # Convert spherical to Cartesian coordinates
-        x1, y1, z1 = spherical_to_cartesian(ra1_rad, dec1_rad)
-        x2, y2, z2 = spherical_to_cartesian(ra2_rad, dec2_rad)
+        # Get the current camera direction
+        camera_direction = get_viewing_direction(ax)
 
-        ax.plot([x1, x2], [y1, y2], [z1, z2], color='black', linewidth=2, alpha=0.2, zorder=4)
+        # Redraw the visible constellations
+        for dec1, ra1, dec2, ra2 in constellation_data:
+            ra1_rad, dec1_rad = 2 * np.pi - np.radians(ra1 * 15), np.radians(dec1)
+            ra2_rad, dec2_rad = 2 * np.pi - np.radians(ra2 * 15), np.radians(dec2)
+            x1, y1, z1 = spherical_to_cartesian(ra1_rad, dec1_rad)
+            x2, y2, z2 = spherical_to_cartesian(ra2_rad, dec2_rad)
+
+            # Determine if the arc is visible
+            if not is_visible_from_camera(camera_direction, x1, y1, z1) and \
+               not is_visible_from_camera(camera_direction, x2, y2, z2):
+                continue
+
+            # Plot the arc
+            ax.plot([x1, x2], [y1, y2], [z1, z2], color='black', linewidth=0.5, alpha=1.0, zorder=4)
+
+        # Add celestial equator
+        lon_eq = np.linspace(0, 2*np.pi, 100)
+        lat_eq = np.zeros_like(lon_eq)  # Latitude = 0 for equator
+        x_eq, y_eq, z_eq = spherical_to_cartesian(lon_eq, lat_eq)
+        ax.plot(x_eq, y_eq, z_eq, 'r', linewidth=1, label='Celestial Equator', zorder=4)
+
+
+        # Refresh the figure
+        fig.canvas.draw_idle()
+
+    # Attach the callback to the figure's rotation
+    fig.canvas.mpl_connect('motion_notify_event', on_view_change)
+
+def get_viewing_direction(ax):
+    azim = np.radians(ax.azim)  # Azimuth angle in radians
+    elev = np.radians(ax.elev)  # Elevation angle in radians
+
+    # Spherical to Cartesian conversion for the camera direction
+    x = np.cos(azim) * np.cos(elev)
+    y = np.sin(azim) * np.cos(elev)
+    z = np.sin(elev)
+    return np.array([x, y, z])
+
+def is_visible_from_camera(camera_direction, x, y, z):
+    point_vector = np.array([x, y, z])
+    dot_product = np.dot(camera_direction, point_vector)
+
+    # A positive dot product means the point is "in front" of the camera
+    return dot_product > 0
 
 # Close any existing figures
 plt.close('all')
 
 # Parameters
 visible_pixels = np.array([{visible_pixels_str}])
-nside_grid = {nside}
+nside_grid = 2
 nside_fine = 8
 nside_ratio = nside_fine // nside_grid
 pixels_per_coarse = nside_ratio * nside_ratio
@@ -1340,25 +1380,27 @@ for i, boundary in enumerate(boundaries):
     lat = boundary.dec.radian
     lon = np.append(lon, lon[0])
     lat = np.append(lat, lat[0])
+    lon = 2 * np.pi - lon
     x, y, z = spherical_to_cartesian(lon, lat)
     panel.append(np.column_stack((x, y, z)))
     containing_grid_pixel = i // pixels_per_coarse
     col.append('gold' if (containing_grid_pixel in visible_pixels) else 'midnightblue')
 
-ax.add_collection(Poly3DCollection(panel, facecolors=col, edgecolors='none', alpha=0.5))
-    
+ax.add_collection(Poly3DCollection(panel, facecolors=col, edgecolors='none', alpha=0.9, zorder=1))
+
 # Add celestial equator
 lon_eq = np.linspace(0, 2*np.pi, 100)
 lat_eq = np.zeros_like(lon_eq)  # Latitude = 0 for equator
 x_eq, y_eq, z_eq = spherical_to_cartesian(lon_eq, lat_eq)
-ax.plot(x_eq, y_eq, z_eq, 'r', linewidth=2, label='Celestial Equator')
+ax.plot(x_eq, y_eq, z_eq, 'r', linewidth=1, label='Celestial Equator', zorder=4)
 
 # Add North Celestial Pole (NCP)
 # NCP is at latitude = 90° (pi/2 radians)
-x_ncp, y_ncp, z_ncp = spherical_to_cartesian(0, np.pi/2)
-ax.scatter(x_ncp, y_ncp, z_ncp, color='red', s=100, marker='*', label='NCP')
+x_ncp, y_ncp, z_ncp = spherical_to_cartesian(0, np.pi/2, 1.05)
+ax.scatter(x_ncp, y_ncp, z_ncp, color='red', s=100, marker='*', label='NCP', zorder=2)
 
-plot_constellations(ax)
+constellation_data = get_constellation_data()
+update_visible_constellations(ax, fig, constellation_data)
 
 ax.view_init(elev=30, azim=45)
 ax.set_axis_off()
@@ -1369,6 +1411,7 @@ ax.set_aspect('equal')
 plt.tight_layout()
 
 plt.show()
+
 """
 
     # Execute the script in a subprocess
