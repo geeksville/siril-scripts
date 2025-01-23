@@ -1305,7 +1305,24 @@ def get_constellation_data():
         (-15.3839, 17.6261, -12.8343, 17.3473),
     ]
 
-def update_visible_constellations(ax, fig, constellation_data):
+def preprocess_constellation_data_np(constellation_data):
+    # Initialize lists for Cartesian coordinates
+    cartesian_data = []
+
+    for dec1, ra1, dec2, ra2 in constellation_data:
+        # Convert RA and Dec to radians
+        ra1_rad, dec1_rad = 2 * np.pi - np.radians(ra1 * 15), np.radians(dec1)
+        ra2_rad, dec2_rad = 2 * np.pi - np.radians(ra2 * 15), np.radians(dec2)
+
+        # Convert spherical to Cartesian
+        x1, y1, z1 = spherical_to_cartesian(ra1_rad, dec1_rad)
+        x2, y2, z2 = spherical_to_cartesian(ra2_rad, dec2_rad)
+
+        cartesian_data.append([x1, y1, z1, x2, y2, z2])
+
+    return np.array(cartesian_data)
+
+def update_visible_constellations_np(ax, fig, preprocessed_data):
     def on_view_change(event=None):
         # Clear the existing constellation lines
         for line in ax.lines:
@@ -1314,33 +1331,39 @@ def update_visible_constellations(ax, fig, constellation_data):
         # Get the current camera direction
         camera_direction = get_viewing_direction(ax)
 
-        # Redraw the visible constellations
-        for dec1, ra1, dec2, ra2 in constellation_data:
-            ra1_rad, dec1_rad = 2 * np.pi - np.radians(ra1 * 15), np.radians(dec1)
-            ra2_rad, dec2_rad = 2 * np.pi - np.radians(ra2 * 15), np.radians(dec2)
-            x1, y1, z1 = spherical_to_cartesian(ra1_rad, dec1_rad)
-            x2, y2, z2 = spherical_to_cartesian(ra2_rad, dec2_rad)
+        # Split the array for easier processing
+        start_points = preprocessed_data[:, :3]  # (x1, y1, z1)
+        end_points = preprocessed_data[:, 3:]    # (x2, y2, z2)
 
-            # Determine if the arc is visible
-            if not is_visible_from_camera(camera_direction, x1, y1, z1) and \
-               not is_visible_from_camera(camera_direction, x2, y2, z2):
-                continue
+        # Determine visibility using vectorized operations
+        visible_mask_start = is_visible_from_camera_vectorized(camera_direction, start_points)
+        visible_mask_end = is_visible_from_camera_vectorized(camera_direction, end_points)
+        visible_mask = visible_mask_start | visible_mask_end
 
-            # Plot the arc
+        # Filter the visible constellations
+        visible_arcs = preprocessed_data[visible_mask]
+
+        # Plot all visible arcs
+        for arc in visible_arcs:
+            x1, y1, z1, x2, y2, z2 = arc
             ax.plot([x1, x2], [y1, y2], [z1, z2], color='black', linewidth=0.5, alpha=1.0, zorder=4)
 
         # Add celestial equator
-        lon_eq = np.linspace(0, 2*np.pi, 100)
+        lon_eq = np.linspace(0, 2 * np.pi, 100)
         lat_eq = np.zeros_like(lon_eq)  # Latitude = 0 for equator
         x_eq, y_eq, z_eq = spherical_to_cartesian(lon_eq, lat_eq)
         ax.plot(x_eq, y_eq, z_eq, 'r', linewidth=1, label='Celestial Equator', zorder=4)
-
 
         # Refresh the figure
         fig.canvas.draw_idle()
 
     # Attach the callback to the figure's rotation
     fig.canvas.mpl_connect('motion_notify_event', on_view_change)
+
+def is_visible_from_camera_vectorized(camera_direction, points):
+    x, y, z = points[:, 0], points[:, 1], points[:, 2]
+    cx, cy, cz = camera_direction
+    return (x * cx + y * cy + z * cz) > 0  # Example dot product logic for visibility
 
 def get_viewing_direction(ax):
     azim = np.radians(ax.azim)  # Azimuth angle in radians
@@ -1351,13 +1374,6 @@ def get_viewing_direction(ax):
     y = np.sin(azim) * np.cos(elev)
     z = np.sin(elev)
     return np.array([x, y, z])
-
-def is_visible_from_camera(camera_direction, x, y, z):
-    point_vector = np.array([x, y, z])
-    dot_product = np.dot(camera_direction, point_vector)
-
-    # A positive dot product means the point is "in front" of the camera
-    return dot_product > 0
 
 # Close any existing figures
 plt.close('all')
@@ -1396,11 +1412,12 @@ ax.plot(x_eq, y_eq, z_eq, 'r', linewidth=1, label='Celestial Equator', zorder=4)
 
 # Add North Celestial Pole (NCP)
 # NCP is at latitude = 90° (pi/2 radians)
-x_ncp, y_ncp, z_ncp = spherical_to_cartesian(0, np.pi/2, 1.05)
+x_ncp, y_ncp, z_ncp = spherical_to_cartesian(0, np.pi/2, 1.1)
 ax.scatter(x_ncp, y_ncp, z_ncp, color='red', s=100, marker='*', label='NCP', zorder=2)
 
 constellation_data = get_constellation_data()
-update_visible_constellations(ax, fig, constellation_data)
+preprocessed_data = preprocess_constellation_data_np(constellation_data)
+update_visible_constellations_np(ax, fig, preprocessed_data)
 
 ax.view_init(elev=30, azim=45)
 ax.set_axis_off()
