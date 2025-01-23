@@ -174,7 +174,7 @@ class CosmicClarityInterface:
 
     def check_config_file(self):
         config_dir = self.siril.get_siril_configdir()
-        config_file_path = os.path.join(config_dir, "siril", "sirilcc_denoise.conf")
+        config_file_path = os.path.join(config_dir, "sirilcc_denoise.conf")
 
         if os.path.isfile(config_file_path):
             with open(config_file_path, 'r') as file:
