@@ -308,6 +308,10 @@ class SirilCatInstallerInterface:
         os.remove(bz2_path)
         os.remove(sha256sum_path)
 
+        # Set the catalog in preferences
+        print("Setting the catalog location in Preferences->Astrometry")
+        self.siril.cmd("set", f"core.catalogue_gaia_astro={decompressed_path}")
+
         print("Installation completed successfully.")
 
     def install_spcc(self):
@@ -361,18 +365,18 @@ class SirilCatInstallerInterface:
             os.remove(sha256sum_path)
             print(f"{decompressed_path} installed successfully.")
 
+        print("Setting the catalog location in Preferences->Astrometry")
+        self.siril.cmd("set", f"core.catalogue_gaia_photo={target_dir}")
+
         if not error:
             print("Installation complete, all files installed successfully.")
         else:
             print("Installation complete but not all files installed successfully. Please review the error messages", file=sys.stderr)
-
-
         return
 
     def preview_coverage(self):
         pixels = self.get_pixels_from_ui()
-#        cat_path = os.path.join(self.siril.get_siril_systemdatadir(), "catalogue", "constellations.csv")
-        cat_path = os.path.join("/usr", "local", "share", "siril", "catalogue", "constellations.csv")
+        cat_path = os.path.join(self.siril.get_siril_systemdatadir(), "catalogue", "constellations.csv")
         plot_visible_pixels(pixels, cat_path)
         return
 
