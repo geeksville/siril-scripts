@@ -624,15 +624,10 @@ ax.set_zlim([-1,1])
 ax.set_aspect('equal')
 plt.tight_layout()
 plt.show()
-
 """
 
     # Execute the script in a subprocess
-    process = subprocess.run(
-        [sys.executable, "-c", script],  # Run the script as a string
-        text=True,
-        capture_output=True
-    )
+    process = subprocess.Popen([sys.executable, "-c", script])
 
     # Check if the subprocess encountered an error
     if process.returncode != 0:
