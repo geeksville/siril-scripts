@@ -581,7 +581,7 @@ def get_area_of_interest(area):
     elif area == "Summer Triangle":
         return [9,12,13,14,15,29,31]
     elif area == "Milky Way":
-        return [0,1,2,3,12,13,16,17,18,19,28,29,30,36,37,40,41,42,43,45,46,47]
+        return [2,3,12,13,14,15,28,29,30,31,36,37,38,39,40,41,42,46]
     elif area == "Orion to Taurus":
         return [0,1,6,20,21,22,23]
     else:
