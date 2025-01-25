@@ -280,7 +280,7 @@ class SirilCosmicClarityInterface:
 
                 # Save the executable path to config file if changed
                 if executable_path != self.config_executable:
-                    config_file_path = os.path.join(self.siril.get_siril_configdir(), "siril", "sirilcc_sharpen.conf")
+                    config_file_path = os.path.join(self.siril.get_siril_configdir(), "sirilcc_sharpen.conf")
                     with open(config_file_path, 'w') as file:
                         file.write(f"{executable_path}\n")
 
