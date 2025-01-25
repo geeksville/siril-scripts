@@ -164,7 +164,7 @@ class SirilCatInstallerInterface:
             state="readonly",
             width=20
         )
-        self.method_var.set("All")
+        self.method_var.set("")
         method_combo.pack(side=tk.LEFT, padx=10)
         tksiril.create_tooltip(method_combo, "Select how to filter the SPCC catalog: 'All' will install "
                         "all chunks; 'Visible from Latiude' will install all chunks that are visible from the observer's "
@@ -198,7 +198,9 @@ class SirilCatInstallerInterface:
     def get_pixels_from_ui(self):
         pixels = None
         method = self.method_var.get()
-        if method == "Area of Interest":
+        if method == "":
+            pixels = []
+        elif method == "Area of Interest":
             area = self.area_var.get()
             pixels = get_area_of_interest(area)
         elif method == "Visible from Latitude":
@@ -379,6 +381,8 @@ class SirilCatInstallerInterface:
 
     def preview_coverage(self):
         pixels = self.get_pixels_from_ui()
+        if pixels == []:
+            print("Warning: np catalog chunks selected. Set the selection method.")
         cat_path = os.path.join(self.siril.get_siril_systemdatadir(), "catalogue", "constellations.csv")
         plot_visible_pixels(pixels, cat_path)
         return
@@ -539,6 +543,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from astropy_healpix import HEALPix
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from astropy.coordinates import get_sun, SkyCoord
+from astropy.time import Time
 
 def sphtoc(lon, lat, r = 1):
     x = r * np.cos(lat) * np.cos(lon)
@@ -572,12 +578,20 @@ def upd_vis_cons(ax, fig, ppdata):
         for arc in visible_arcs:
             x1, y1, z1, x2, y2, z2 = arc
             ax.plot([x1, x2], [y1, y2], [z1, z2], color='black', linewidth=0.5, alpha=1.0, zorder=4)
+        # Celestial equator visibility
         lon_eq = np.linspace(0, 2 * np.pi, 100)
         lat_eq = np.zeros_like(lon_eq)
         x_eq, y_eq, z_eq = sphtoc(lon_eq, lat_eq)
-        ax.plot(x_eq, y_eq, z_eq, 'r', linewidth=1, label='Celestial Equator', zorder=4)
+        visible_eq_mask = vis_from_cam(camera_direction, np.column_stack((x_eq, y_eq, z_eq)))
+        visible_indices = np.where(visible_eq_mask)[0]
+        if len(visible_indices) > 0:
+            segments = np.split(visible_indices, np.where(np.diff(visible_indices) != 1)[0] + 1)
+            for segment in segments:
+                ax.plot(x_eq[segment], y_eq[segment], z_eq[segment], 'r', linewidth=0.5, label='Celestial Equator', zorder=4)
+        x_ncp, y_ncp, z_ncp = sphtoc(0, np.pi/2, 1.1)
         fig.canvas.draw_idle()
     fig.canvas.mpl_connect('motion_notify_event', on_view_change)
+    on_view_change()
 
 def vis_from_cam(camera_direction, points):
     return np.dot(points, camera_direction) > 0
@@ -609,12 +623,6 @@ for i, boundary in enumerate(boundaries):
     containing_grid_pixel = i // pixels_per_coarse
     col.append('gold' if (containing_grid_pixel in visible_pixels) else 'midnightblue')
 ax.add_collection(Poly3DCollection(panel, facecolors=col, edgecolors='none', alpha=0.9, zorder=1))
-lon_eq = np.linspace(0, 2*np.pi, 100)
-lat_eq = np.zeros_like(lon_eq)
-x_eq, y_eq, z_eq = sphtoc(lon_eq, lat_eq)
-ax.plot(x_eq, y_eq, z_eq, 'r', linewidth=1, label='Celestial Equator', zorder=4)
-x_ncp, y_ncp, z_ncp = sphtoc(0, np.pi/2, 1.1)
-ax.scatter(x_ncp, y_ncp, z_ncp, color='red', s=100, marker='*', label='NCP', zorder=2)
 arcs = []
 with open(r'{filename}', 'r') as csvfile:
     next(csvfile)
@@ -622,24 +630,33 @@ with open(r'{filename}', 'r') as csvfile:
     for row in reader:
         arcs.append(tuple(map(float, row)))
 ppdata = pp_arcs(arcs)
-upd_vis_cons(ax, fig, ppdata)
-ax.view_init(elev=30, azim=45)
+date = Time.now()
+sun_coords = get_sun(date)
+ra_as = (sun_coords.ra.deg + 180) % 360
+dec_as = -sun_coords.dec.deg
+def get_roll(elev, azim):
+    if abs(elev) > 90:
+        return 180
+    return 0
+roll = get_roll(ra_as, dec_as)
+ax.view_init(elev=ra_as, azim=dec_as, roll=roll)
 ax.set_axis_off()
 ax.set_xlim([-1,1])
 ax.set_ylim([-1,1])
 ax.set_zlim([-1,1])
 ax.set_aspect('equal')
 plt.tight_layout()
+upd_vis_cons(ax, fig, ppdata)
 plt.show()
 """
 
     # Execute the script in a subprocess
     process = subprocess.Popen([sys.executable, "-c", script])
 
-    # Check if the subprocess encountered an error
-    if process.returncode != 0:
+    # Check if the subprocess encountered an error starting up
+    if process.errors is not None:
         print("Subprocess encountered an error:")
-        print(process.stderr)
+        print(process.errors)
 
 def fetch_and_store_chunk(pixel, url_base, target_path):
     # Create the file name and sha256sum file name using the provided pixel
