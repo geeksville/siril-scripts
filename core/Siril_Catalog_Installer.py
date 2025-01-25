@@ -148,7 +148,7 @@ class SirilCatInstallerInterface:
             width=20
         )
         self.area_var.set("Galaxy Season")
-        area_combo.pack(side=tk.LEFT, padx=10)
+        area_combo.pack(side=tk.RIGHT)
         tksiril.create_tooltip(area_combo, "Select the area of interest for the SPCC catalog. This will install "
                                "only chunks covering the area of interest")
 
@@ -165,7 +165,7 @@ class SirilCatInstallerInterface:
             width=20
         )
         self.method_var.set("")
-        method_combo.pack(side=tk.LEFT, padx=10)
+        method_combo.pack(side=tk.RIGHT)
         tksiril.create_tooltip(method_combo, "Select how to filter the SPCC catalog: 'All' will install "
                         "all chunks; 'Visible from Latiude' will install all chunks that are visible from the observer's "
                         "latitude above the given minimum elevation during the course of the year; 'Area "
@@ -175,6 +175,10 @@ class SirilCatInstallerInterface:
         spcc_button_frame = ttk.Frame(spcc_frame)
         spcc_button_frame.pack(fill=tk.X, pady=5)
 
+        # Configure the frame's column weights to make buttons equal
+        spcc_button_frame.columnconfigure(0, weight=1)
+        spcc_button_frame.columnconfigure(1, weight=1)
+
         # Preview button for HEALpixel coverage
         healpix_btn = ttk.Button(
             spcc_button_frame,
@@ -182,7 +186,7 @@ class SirilCatInstallerInterface:
             command=self.preview_coverage,
             style="TButton"
         )
-        healpix_btn.pack(side=tk.LEFT, padx=5)
+        healpix_btn.grid(row=0, column=0, pady=2, sticky='ew')
         tksiril.create_tooltip(healpix_btn, "Preview HEALpix coverage")
 
         # Install button for SPCC
@@ -192,8 +196,27 @@ class SirilCatInstallerInterface:
             command=self.install_spcc,
             style="TButton"
         )
-        spcc_install_btn.pack(side=tk.LEFT, padx=5)
+        spcc_install_btn.grid(row=0, column=1, pady=2, sticky='ew')
         tksiril.create_tooltip(spcc_install_btn, "Install or update the SPCC catalog with selected parameters")
+
+        # Buttons frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(pady=20)
+
+        close_btn = ttk.Button(
+            button_frame,
+            text="Close",
+            command=self.close_dialog,
+            style="TButton"
+        )
+        close_btn.pack(side=tk.LEFT)
+        tksiril.create_tooltip(close_btn, "Close the Catalog Installer dialog")
+
+    def close_dialog(self):
+        self.siril.disconnect()
+        if hasattr(self, 'root'):
+            self.root.quit()
+            self.root.destroy()
 
     def get_pixels_from_ui(self):
         pixels = None
@@ -270,69 +293,22 @@ class SirilCatInstallerInterface:
             return True
 
     def install_astrometry(self):
-        # URLs of the files to download
-        catfile = f"siril_cat_healpix{ASTRO_INDEXLEVEL}_astro.dat.bz2"
-        shasumfile = f"{catfile}.sha256sum"
-        bz2_url = f"https://zenodo.org/records/{ASTRO_RECORD}/files/{catfile}"
-        sha256sum_url = f"{bz2_url}.sha256sum"
+        # Confirmation dialog, as this is a large amount of data
+        proceed = messagebox.askyesno(
+            "Confirm Download",
+            "This will download a large amount of data. Are you sure you want to proceed?",
+            icon='warning'
+        )
 
-        # Set target dir
-        target_dir = self.siril.get_siril_userdatadir()
-
-        # Ensure the target directory exists
-        os.makedirs(target_dir, exist_ok=True)
-
-        # Download the .sha256sum file
-        sha256sum_path = os.path.join(target_dir, shasumfile)
-        print(f"Downloading {sha256sum_url} to {sha256sum_path}...")
-        response = requests.get(sha256sum_url)
-        with open(sha256sum_path, 'wb') as f:
-            f.write(response.content)
-
-        # Does the compressed archive already exist? If so, check the checksum
-        # If it doesn't exist or the checksum is invalid, download again
-        bz2_path = os.path.join(target_dir, catfile)
-        if os.path.exists(bz2_path) and self.verify_sha256sum(bz2_path, sha256sum_path):
-            print("Existing archive found with valid checksum...")
-        else:
-            # Download the .bz2 file with progress reporting
-            print(f"Downloading {bz2_url} to {bz2_path}...")
-            self.download_with_progress(bz2_url, bz2_path)
-            if not self.verify_sha256sum(bz2_path, sha256sum_path):
-                print("Checksum verification error, unable to proceed.")
-                return
-
-        # Determine the decompressed file path by removing the .bz2 extension
-        decompressed_filename = os.path.basename(bz2_path).rsplit('.bz2', 1)[0]
-        decompressed_path = os.path.join(target_dir, decompressed_filename)
-        # Decompress the .bz2 file
-        self.decompress_with_progress(bz2_path, decompressed_path)
-
-        # Clean up: remove the compressed archive and checksum file
-        print("Cleaning up...")
-        os.remove(bz2_path)
-        os.remove(sha256sum_path)
-
-        # Set the catalog in preferences
-        print("Setting the catalog location in Preferences->Astrometry")
-        self.siril.cmd("set", f"core.catalogue_gaia_astro={decompressed_path}")
-
-        print("Installation completed successfully.")
-
-    def install_spcc(self):
-        pixels = self.get_pixels_from_ui()
-        print(f"Installing the following Level 1 HEALpixels: {pixels}")
-        chunks = []
-        error = 0
-        for pixel in pixels:
-            catfile = f"siril_cat{SPCC_CHUNKLEVEL}_healpix{SPCC_INDEXLEVEL}_xpsamp_{pixel}.dat.bz2"
-            chunks.append(catfile)
+        if proceed:
+            # URLs of the files to download
+            catfile = f"siril_cat_healpix{ASTRO_INDEXLEVEL}_astro.dat.bz2"
             shasumfile = f"{catfile}.sha256sum"
-            bz2_url = f"https://zenodo.org/records/{SPCC_RECORD}/files/{catfile}"
+            bz2_url = f"https://zenodo.org/records/{ASTRO_RECORD}/files/{catfile}"
             sha256sum_url = f"{bz2_url}.sha256sum"
 
             # Set target dir
-            target_dir = os.path.join(self.siril.get_siril_userdatadir(), f"siril_cat{SPCC_CHUNKLEVEL}_healpix{SPCC_INDEXLEVEL}_xpsamp")
+            target_dir = self.siril.get_siril_userdatadir()
 
             # Ensure the target directory exists
             os.makedirs(target_dir, exist_ok=True)
@@ -354,9 +330,8 @@ class SirilCatInstallerInterface:
                 print(f"Downloading {bz2_url} to {bz2_path}...")
                 self.download_with_progress(bz2_url, bz2_path)
                 if not self.verify_sha256sum(bz2_path, sha256sum_path):
-                    print(f"Checksum verification error for {bz2_path}, skipping HEALpixel {pixel}.", file=sys.stderr)
-                    error = 1
-                    continue
+                    print("Checksum verification error, unable to proceed.")
+                    return
 
             # Determine the decompressed file path by removing the .bz2 extension
             decompressed_filename = os.path.basename(bz2_path).rsplit('.bz2', 1)[0]
@@ -368,16 +343,79 @@ class SirilCatInstallerInterface:
             print("Cleaning up...")
             os.remove(bz2_path)
             os.remove(sha256sum_path)
-            print(f"{decompressed_path} installed successfully.")
 
-        print("Setting the catalog location in Preferences->Astrometry")
-        self.siril.cmd("set", f"core.catalogue_gaia_photo={target_dir}")
+            # Set the catalog in preferences
+            print("Setting the catalog location in Preferences->Astrometry")
+            self.siril.cmd("set", f"core.catalogue_gaia_astro={decompressed_path}")
 
-        if not error:
-            print("Installation complete, all files installed successfully.")
-        else:
-            print("Installation complete but not all files installed successfully. Please review the error messages", file=sys.stderr)
-        return
+            print("Installation completed successfully.")
+
+    def install_spcc(self):
+        proceed = messagebox.askyesno(
+            "Confirm Download",
+            "This will download a large amount of data. Are you sure you want to proceed?",
+            icon='warning'
+        )
+
+        if proceed:
+            pixels = self.get_pixels_from_ui()
+            print(f"Installing the following Level 1 HEALpixels: {pixels}")
+            chunks = []
+            error = 0
+            for pixel in pixels:
+                catfile = f"siril_cat{SPCC_CHUNKLEVEL}_healpix{SPCC_INDEXLEVEL}_xpsamp_{pixel}.dat.bz2"
+                chunks.append(catfile)
+                shasumfile = f"{catfile}.sha256sum"
+                bz2_url = f"https://zenodo.org/records/{SPCC_RECORD}/files/{catfile}"
+                sha256sum_url = f"{bz2_url}.sha256sum"
+
+                # Set target dir
+                target_dir = os.path.join(self.siril.get_siril_userdatadir(), f"siril_cat{SPCC_CHUNKLEVEL}_healpix{SPCC_INDEXLEVEL}_xpsamp")
+
+                # Ensure the target directory exists
+                os.makedirs(target_dir, exist_ok=True)
+
+                # Download the .sha256sum file
+                sha256sum_path = os.path.join(target_dir, shasumfile)
+                print(f"Downloading {sha256sum_url} to {sha256sum_path}...")
+                response = requests.get(sha256sum_url)
+                with open(sha256sum_path, 'wb') as f:
+                    f.write(response.content)
+
+                # Does the compressed archive already exist? If so, check the checksum
+                # If it doesn't exist or the checksum is invalid, download again
+                bz2_path = os.path.join(target_dir, catfile)
+                if os.path.exists(bz2_path) and self.verify_sha256sum(bz2_path, sha256sum_path):
+                    print("Existing archive found with valid checksum...")
+                else:
+                    # Download the .bz2 file with progress reporting
+                    print(f"Downloading {bz2_url} to {bz2_path}...")
+                    self.download_with_progress(bz2_url, bz2_path)
+                    if not self.verify_sha256sum(bz2_path, sha256sum_path):
+                        print(f"Checksum verification error for {bz2_path}, skipping HEALpixel {pixel}.", file=sys.stderr)
+                        error = 1
+                        continue
+
+                # Determine the decompressed file path by removing the .bz2 extension
+                decompressed_filename = os.path.basename(bz2_path).rsplit('.bz2', 1)[0]
+                decompressed_path = os.path.join(target_dir, decompressed_filename)
+                # Decompress the .bz2 file
+                self.decompress_with_progress(bz2_path, decompressed_path)
+
+                # Clean up: remove the compressed archive and checksum file
+                print("Cleaning up...")
+                os.remove(bz2_path)
+                os.remove(sha256sum_path)
+                print(f"{decompressed_path} installed successfully.")
+
+            print("Setting the catalog location in Preferences->Astrometry")
+            self.siril.cmd("set", f"core.catalogue_gaia_photo={target_dir}")
+
+            if not error:
+                print("Installation complete, all files installed successfully.")
+            else:
+                print("Installation complete but not all files installed successfully. Please review the error messages", file=sys.stderr)
+            return
 
     def preview_coverage(self):
         pixels = self.get_pixels_from_ui()
