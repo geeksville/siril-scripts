@@ -69,6 +69,8 @@ class SirilCatInstallerInterface:
         if not self.siril.cmd("requires", "1.3.6"):
             return
 
+        self.catalog_path = self.siril.get_siril_userdatadir()
+
         if root:
             self.create_widgets()
             tksiril.match_theme_to_siril(self.root, self.siril)
@@ -199,7 +201,27 @@ class SirilCatInstallerInterface:
         spcc_install_btn.grid(row=0, column=1, pady=2, sticky='ew')
         tksiril.create_tooltip(spcc_install_btn, "Install or update the SPCC catalog with selected parameters")
 
-        # Buttons frame
+        # Catalog Path Selection Frame
+        catpath_frame = ttk.LabelFrame(main_frame, text="Catalog Path", padding=10)
+        catpath_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        self.catalog_path_var = tk.StringVar(value=self.catalog_path or "")
+        catpath_entry = ttk.Entry(
+            catpath_frame,
+            textvariable=self.catalog_path_var,
+            width=40
+        )
+        catpath_entry.pack(side=tk.LEFT, padx=(0, 5), expand=True)
+
+        ttk.Button(
+            catpath_frame,
+            text="Browse",
+            command=self._browse_catalog,
+            style="TButton"
+        ).pack(side=tk.LEFT)
+        tksiril.create_tooltip(catpath_entry, "Set the catalog installation directory")
+
+        # Close button frame
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(pady=20)
 
@@ -211,6 +233,14 @@ class SirilCatInstallerInterface:
         )
         close_btn.pack(side=tk.LEFT)
         tksiril.create_tooltip(close_btn, "Close the Catalog Installer dialog")
+
+    def _browse_catalog(self):
+        filename = filedialog.askdirectory(
+            title="Select Catalog Installation Path",
+            initialdir=self.catalog_path
+        )
+        if filename:
+            self.catalog_path_var.set(filename)
 
     def close_dialog(self):
         self.siril.disconnect()
@@ -308,7 +338,7 @@ class SirilCatInstallerInterface:
             sha256sum_url = f"{bz2_url}.sha256sum"
 
             # Set target dir
-            target_dir = self.siril.get_siril_userdatadir()
+            target_dir = self.catalog_path_var.get()
 
             # Ensure the target directory exists
             os.makedirs(target_dir, exist_ok=True)
@@ -362,18 +392,17 @@ class SirilCatInstallerInterface:
             print(f"Installing the following Level 1 HEALpixels: {pixels}")
             chunks = []
             error = 0
+            # Set target dir
+            target_dir = os.path.join(self.catalog_path_var.get(), f"siril_cat{SPCC_CHUNKLEVEL}_healpix{SPCC_INDEXLEVEL}_xpsamp")
+            # Ensure the target directory exists
+            os.makedirs(target_dir, exist_ok=True)
+
             for pixel in pixels:
                 catfile = f"siril_cat{SPCC_CHUNKLEVEL}_healpix{SPCC_INDEXLEVEL}_xpsamp_{pixel}.dat.bz2"
                 chunks.append(catfile)
                 shasumfile = f"{catfile}.sha256sum"
                 bz2_url = f"https://zenodo.org/records/{SPCC_RECORD}/files/{catfile}"
                 sha256sum_url = f"{bz2_url}.sha256sum"
-
-                # Set target dir
-                target_dir = os.path.join(self.siril.get_siril_userdatadir(), f"siril_cat{SPCC_CHUNKLEVEL}_healpix{SPCC_INDEXLEVEL}_xpsamp")
-
-                # Ensure the target directory exists
-                os.makedirs(target_dir, exist_ok=True)
 
                 # Download the .sha256sum file
                 sha256sum_path = os.path.join(target_dir, shasumfile)
