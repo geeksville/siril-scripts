@@ -3,14 +3,17 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Version 1.0.0
+# Version history:
+# 1.0.0 Initial release
+# 1.0.1 Update SPCC DOI number to reflect fixed catalog
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 # Catalog retrieval details
 ASTRO_RECORD = 14692304
 ASTRO_INDEXLEVEL = 8
 
-SPCC_RECORD = 14697693
+SPCC_RECORD = 14738271
 SPCC_CHUNKLEVEL = 1
 SPCC_INDEXLEVEL = 8
 
