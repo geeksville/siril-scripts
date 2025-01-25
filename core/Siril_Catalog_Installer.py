@@ -575,7 +575,7 @@ def get_visible_healpix(latitude, min_elevation):
     return visible_pixels.tolist()
 def get_area_of_interest(area):
     if area == "Galaxy Season":
-        return [5,8,10,24,25,26,27]
+        return [5,8,9,10,24,25,26,27]
     elif area == "Magellanic Clouds":
         return [32,33,36,38]
     elif area == "Summer Triangle":
