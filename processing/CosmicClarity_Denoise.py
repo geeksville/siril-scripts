@@ -199,7 +199,6 @@ class CosmicClarityInterface:
                 f"--denoise_mode={mode}",
                 f"--denoise_strength={denoise_strength}",
             ]
-
             if not self.use_gpu_var.get():
                 command.append("--disable_gpu")
 
@@ -214,10 +213,9 @@ class CosmicClarityInterface:
                 chunk = await process.stdout.read(80)
                 if not chunk:
                     break
+                buffer += chunk.decode('utf-8', errors='ignore')
 
-                buffer += chunk.decode()
                 lines = buffer.split('\r')
-
                 for line in lines[:-1]:
                     match = re.search(r'(\d+\.\d+)%', line)
                     if match:
@@ -225,21 +223,18 @@ class CosmicClarityInterface:
                         self.siril.update_progress("Seti Astro Cosmic Clarity Denoise progress...", percentage / 100)
                     else:
                         print(line.strip())
-
                 buffer = lines[-1]
 
             await process.wait()
-
             if process.returncode != 0:
                 stderr = await process.stderr.read()
+                error_message = stderr.decode('utf-8', errors='ignore')
                 raise subprocess.CalledProcessError(
                     process.returncode,
                     executable_path,
-                    stderr.decode()
+                    error_message
                 )
-
             return True
-
         except Exception as e:
             print(f"Error in run_cosmic_clarity: {str(e)}")
             return False

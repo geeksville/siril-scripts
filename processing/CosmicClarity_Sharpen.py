@@ -236,7 +236,7 @@ class SirilCosmicClarityInterface:
                 if not chunk:
                     break
 
-                buffer += chunk.decode()
+                buffer += chunk.decode('utf-8', errors='ignore')
                 lines = buffer.split('\r')
 
                 for line in lines[:-1]:
@@ -254,10 +254,11 @@ class SirilCosmicClarityInterface:
 
             if process.returncode != 0:
                 stderr = await process.stderr.read()
+                error_message = stderr.decode('utf-8', errors='ignore')
                 raise subprocess.CalledProcessError(
                     process.returncode,
                     executable_path,
-                    stderr.decode()
+                    error_message
                 )
 
             return True
