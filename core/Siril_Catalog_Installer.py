@@ -613,7 +613,7 @@ ax.plot(x_eq, y_eq, z_eq, 'r', linewidth=1, label='Celestial Equator', zorder=4)
 x_ncp, y_ncp, z_ncp = sphtoc(0, np.pi/2, 1.1)
 ax.scatter(x_ncp, y_ncp, z_ncp, color='red', s=100, marker='*', label='NCP', zorder=2)
 arcs = []
-with open('{filename}', 'r') as csvfile:
+with open(r'{filename}', 'r') as csvfile:
     next(csvfile)
     reader = csv.reader(csvfile)
     for row in reader:
