@@ -449,7 +449,7 @@ class SirilCatInstallerInterface:
     def preview_coverage(self):
         pixels = self.get_pixels_from_ui()
         if pixels == []:
-            print("Warning: np catalog chunks selected. Set the selection method.")
+            print("Warning: no catalog chunks selected. Set the selection method.")
         cat_path = os.path.join(self.siril.get_siril_systemdatadir(), "catalogue", "constellations.csv")
         plot_visible_pixels(pixels, cat_path)
         return
