@@ -39,16 +39,7 @@ import requests
 from ttkthemes import ThemedTk
 
 class SirilCatInstallerInterface:
-    def __init__(self, root=None, cli_args=None):
-        # If no CLI args, create a default namespace with defaults
-        if cli_args is None:
-            parser = argparse.ArgumentParser()
-            parser.add_argument("-lat", type=float, default=0.0)
-            parser.add_argument("-min_elev", type=float, default=0.0)
-            parser.add_argument("-type", type=str)
-            cli_args = parser.parse_args([])
-
-        self.cli_args = cli_args
+    def __init__(self, root=None):
 
         if root:
             self.root = root
@@ -74,10 +65,6 @@ class SirilCatInstallerInterface:
         if root:
             self.create_widgets()
             tksiril.match_theme_to_siril(self.root, self.siril)
-
-        # Only apply changes if CLI arguments are non-default
-        if cli_args and (cli_args.type):
-            self.apply_changes(from_cli=True)
 
     def create_widgets(self):
         # Main frame with no padding
@@ -795,24 +782,11 @@ def process_pixels(pixels, url_base, target_path):
         fetch_and_store_chunk(pixel, url_base, target_path)
 
 def main():
-    parser = argparse.ArgumentParser(description="Siril Catalog Installer")
-    parser.add_argument("-lat", type=float, default=0.0,
-                        help="Observer latitude in degrees (-90 to +90)")
-    parser.add_argument("-min_elev", type=float, default=0.0,
-                        help="Minimum elevation you image at (0 to +90)")
-    parser.add_argument("-type", type=str,
-                        help="Type of catalog to install ('astro' or 'xp_sampled')")
-
-    args = parser.parse_args()
     try:
-        if args.type:
-            # CLI mode
-            app = SirilCatInstallerInterface(cli_args=args)
-        else:
-            # GUI mode
-            root = ThemedTk()
-            app = SirilCatInstallerInterface(root)
-            root.mainloop()
+        # GUI mode
+        root = ThemedTk()
+        app = SirilCatInstallerInterface(root)
+        root.mainloop()
     except Exception as e:
         print(f"Error initializing application: {str(e)}")
         sys.exit(1)
