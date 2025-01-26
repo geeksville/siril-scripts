@@ -353,7 +353,7 @@ class SirilCosmicClarityInterface:
 
     def check_config_file(self):
         config_dir = self.siril.get_siril_configdir()
-        config_file_path = os.path.join(config_dir, "siril", "sirilcc_sharpen.conf")
+        config_file_path = os.path.join(config_dir, "sirilcc_sharpen.conf")
 
         if os.path.isfile(config_file_path):
             with open(config_file_path, 'r') as file:
