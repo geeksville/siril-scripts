@@ -819,7 +819,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    # Example usage
-
-#    process_pixels(pixels, "https://some.url", "~/.local/share/siril/siril_cat2_healpix8_xpsamp_test")
