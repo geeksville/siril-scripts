@@ -249,7 +249,7 @@ class CosmicClarityInterface:
                 clear_input = self.clear_input_dir_var.get()
 
                 if executable_path != self.config_executable:
-                    config_file_path = os.path.join(self.siril.get_siril_configdir(), "siril", "sirilcc_denoise.conf")
+                    config_file_path = os.path.join(self.siril.get_siril_configdir(), "sirilcc_denoise.conf")
                     with open(config_file_path, 'w') as file:
                         file.write(f"{executable_path}\n")
 
