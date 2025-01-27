@@ -13,7 +13,8 @@ has been tested on, what external dependencies are needed (e.g. for scripts that
 software) etc.
 
 ### Merge Request Checklists
-- [ ] The script complies with the Commands Reference (.SSF scripts) or sirilpy API (python scripts).
+- [ ] The script complies with the [Commands Reference](https://siril.readthedocs.io/en/latest/Commands.html)
+      (.SSF scripts) or [sirilpy API](https://siril.readthedocs.io/en/latest/Python-API.html) (python scripts).
 - [ ] I have avoided unnecessary or excessive imports (python scripts).
 - [ ] I have included a version and licence in my script (a SPDX licence identifier is sufficient).
 - [ ] I have included author details and a means of contact (may be social media) for reporting issues.
