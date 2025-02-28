@@ -113,7 +113,7 @@ def main():
     selh = None
     if (args.x > halfsize and args.y > halfsize and args.x < (width - halfsize) and \
                 args.y < (height - halfsize)):
-        selx = args.x = halfsize
+        selx = args.x - halfsize
         sely = args.y - halfsize
         selw = args.size
         selh = args.size
