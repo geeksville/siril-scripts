@@ -5,9 +5,10 @@
 # Version 1.0.0
 # Version history:
 # 1.0.0 Initial release
-# 1.0.1 Update SPCC DOI number to reflect fixed catalog
+# 1.0.1 Update SPCC DOI number to reflect fixed catalog4
+# 1.0.2 Cyril Richard: Fix paths with spaces in catalog installation directories
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 # Catalog retrieval details
 ASTRO_RECORD = 14692304
@@ -363,7 +364,7 @@ class SirilCatInstallerInterface:
 
             # Set the catalog in preferences
             print("Setting the catalog location in Preferences->Astrometry")
-            self.siril.cmd("set", f"core.catalogue_gaia_astro={decompressed_path}")
+            sself.siril.cmd("set", f"\"core.catalogue_gaia_astro={decompressed_path}\"")
 
             print("Installation completed successfully.")
 
@@ -425,7 +426,7 @@ class SirilCatInstallerInterface:
                 print(f"{decompressed_path} installed successfully.")
 
             print("Setting the catalog location in Preferences->Astrometry")
-            self.siril.cmd("set", f"core.catalogue_gaia_photo={target_dir}")
+            self.siril.cmd("set", f"\"core.catalogue_gaia_photo={target_dir}\"")
 
             if not error:
                 print("Installation complete, all files installed successfully.")
