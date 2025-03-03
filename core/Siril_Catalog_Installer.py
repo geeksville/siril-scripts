@@ -5,7 +5,7 @@
 # Version 1.0.0
 # Version history:
 # 1.0.0 Initial release
-# 1.0.1 Update SPCC DOI number to reflect fixed catalog4
+# 1.0.1 Update SPCC DOI number to reflect fixed catalog
 # 1.0.2 Cyril Richard: Fix paths with spaces in catalog installation directories
 
 VERSION = "1.0.2"
