@@ -364,7 +364,7 @@ class SirilCatInstallerInterface:
 
             # Set the catalog in preferences
             print("Setting the catalog location in Preferences->Astrometry")
-            sself.siril.cmd("set", f"\"core.catalogue_gaia_astro={decompressed_path}\"")
+            self.siril.cmd("set", f"\"core.catalogue_gaia_astro={decompressed_path}\"")
 
             print("Installation completed successfully.")
 
