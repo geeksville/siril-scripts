@@ -365,7 +365,8 @@ class SirilCatInstallerInterface:
 
             # Set the catalog in preferences
             print("Setting the catalog location in Preferences->Astrometry")
-            self.siril.cmd("set", f"\"core.catalogue_gaia_astro={decompressed_path.replace('\\', '\\\\')}\"")
+            escaped_path = decompressed_path.replace('\\', '\\\\')
+            self.siril.cmd("set", f"\"core.catalogue_gaia_astro={escaped_path}\"")
 
             print("Installation completed successfully.")
 
@@ -427,7 +428,8 @@ class SirilCatInstallerInterface:
                 print(f"{decompressed_path} installed successfully.")
 
             print("Setting the catalog location in Preferences->Astrometry")
-            self.siril.cmd("set", f"\"core.catalogue_gaia_photo={target_dir.replace('\\', '\\\\')}\"")
+            escaped_dir = target_dir.replace('\\', '\\\\')
+            self.siril.cmd("set", f"\"core.catalogue_gaia_photo={escaped_dir}\"")
 
             if not error:
                 print("Installation complete, all files installed successfully.")
