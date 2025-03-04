@@ -7,8 +7,9 @@
 # 1.0.0 Initial release
 # 1.0.1 Update SPCC DOI number to reflect fixed catalog
 # 1.0.2 Cyril Richard: Fix paths with spaces in catalog installation directories
+# 1.0.3 Adrian Knagg-Baugh: Fix paths with backslashes in catalog installation directories
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 
 # Catalog retrieval details
 ASTRO_RECORD = 14692304
