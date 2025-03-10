@@ -19,7 +19,10 @@ from tkinter import ttk
 from ttkthemes import ThemedTk
 from sirilpy import LogColor, tksiril
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
+
+# 1.0.0 Original release by Rich Stevenson
+# 1.0.1 Minor edit by Adrian Knagg-Baugh to reflect changes to LogColor names
 
 class StarReductionInterface:
     def __init__(self, root):
@@ -35,9 +38,9 @@ class StarReductionInterface:
         self.siril = s.SirilInterface()
         if self.siril.connect():
             tksiril.match_theme_to_siril(self.root, self.siril)
-            self.siril.log("Connected successfully!", color=LogColor.Green)
+            self.siril.log("Connected successfully!", color=LogColor.GREEN)
         else:
-            self.siril.log("Connection failed", color=LogColor.Red)
+            self.siril.log("Connection failed", color=LogColor.RED)
             sys.exit()
 
         # Initial checks
@@ -188,7 +191,7 @@ class StarReductionInterface:
 
             # Check if Apply was previously clicked by checking for starless file. If so, no need to run Starnet again
             if os.path.exists(f"starless_{img_name_default_ext}"):
-                self.siril.log("Previous star reduction was detected.", color=LogColor.Green)
+                self.siril.log("Previous star reduction was detected.", color=LogColor.GREEN)
                 starless = f"$starless_{img_name_default_ext}$"  # Wrap in $ for PixelMath
             else:
                 self.siril.cmd("starnet", "-nostarmask")
@@ -208,10 +211,10 @@ class StarReductionInterface:
                 self.siril.cmd("save", f"\"{current_img}_ReducedStars_{star_reduction_value}{default_ext}\"")
                 self.siril.cmd("load", f"\"{current_img}_ReducedStars_{star_reduction_value}{default_ext}\"")
 
-            self.siril.log("Star Reduction is complete!", color=LogColor.Green)
+            self.siril.log("Star Reduction is complete!", color=LogColor.GREEN)
             return True
         except Exception as e:
-            self.siril.log(f"Error in run_reduction: {str(e)}", color=LogColor.Red)
+            self.siril.log(f"Error in run_reduction: {str(e)}", color=LogColor.RED)
             return False
 
     def run_close(self):

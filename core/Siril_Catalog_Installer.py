@@ -42,27 +42,6 @@ from astropy_healpix import HEALPix
 import requests
 from ttkthemes import ThemedTk
 
-def human_readable_size(bytes_size: int) -> str:
-    """
-    Convert bytes to human-readable format.
-
-    Args:
-        bytes_size (int): Size in bytes
-
-    Returns:
-        str: Formatted size with appropriate unit (B, KB, MB, GB, TB)
-    """
-    units = [' B', ' KB', ' MB', ' GB', ' TB']
-    size = float(bytes_size)
-    unit_index = 0
-
-    while size >= 1024 and unit_index < len(units) - 1:
-        size /= 1024
-        unit_index += 1
-
-    # Round to 2 decimal places, remove trailing zeros
-    return f"{size:.2f}".rstrip('0').rstrip('.') + units[unit_index]
-
 class SirilCatInstallerInterface:
     def __init__(self, root=None):
 
@@ -276,116 +255,6 @@ class SirilCatInstallerInterface:
             pixels = list(range(48))
         return pixels
 
-    def download_with_progress(
-        self,
-        url: str,
-        file_path: str,
-        max_retries: int = 3,
-        retry_delay: int = 5
-        ) -> bool:
-        """
-        Robust file download method with progress tracking and error handling.
-
-        Args:
-            url (str): URL of the file to download
-            file_path (str): Local path to save the downloaded file
-            max_retries (int): Number of download retry attempts
-            retry_delay (int): Delay between retry attempts in seconds
-
-        Returns:
-            bool: True if download successful, False otherwise
-        """
-        temp_file_path = file_path + '.part'
-
-        def get_file_size_and_resume_point() -> tuple[int, int]:
-            """Determine the current file size for resuming download."""
-            if os.path.exists(temp_file_path):
-                return os.path.getsize(temp_file_path), 1
-            return 0, 0
-
-        for attempt in range(max_retries):
-            try:
-                # Get initial file size and determine if resuming
-                initial_size, resume_attempt = get_file_size_and_resume_point()
-
-                # Prepare headers for partial content
-                headers = {}
-                if initial_size > 0:
-                    headers['Range'] = f'bytes={initial_size}-'
-
-                # Establish connection with timeout
-                response = requests.get(url, stream=True, headers=headers, timeout=30)
-                response.raise_for_status()
-
-                # Determine total file size and content range
-                total_size = int(response.headers.get('content-length', 0))
-                if headers.get('Range'):
-                    # If resuming, adjust total size
-                    content_range = response.headers.get('Content-Range', '')
-                    if content_range:
-                        total_size = int(content_range.split('/')[-1])
-
-                downloaded_size = initial_size
-
-                # Progress update rate limiting
-                max_update_frequency = 5.0
-                last_update_time = 0
-                min_update_interval = 1 / max_update_frequency
-
-                # Open file in append mode or write mode
-                mode = 'ab' if initial_size > 0 else 'wb'
-                with open(temp_file_path, mode) as f:
-                    vernier = 0
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if not chunk:
-                            continue
-
-                        f.write(chunk)
-                        downloaded_size += len(chunk)
-
-                        current_time = time.time()
-
-                        # Update progress
-                        if total_size > 0 and current_time - last_update_time >= min_update_interval:
-                            progress = downloaded_size / total_size
-                            status = f"Downloading... (Attempt {resume_attempt}, {human_readable_size(downloaded_size)}/{human_readable_size(total_size)})"
-                            self.siril.update_progress(status, progress)
-                            last_update_time = current_time
-
-                # Verify download completeness
-                if downloaded_size >= total_size:
-                    # Rename temp file to final file
-                    os.replace(temp_file_path, file_path)
-                    return True
-
-                # If download is incomplete, will retry
-                time.sleep(retry_delay)
-
-            except requests.exceptions.RequestException as e:
-                # Comprehensive error handling for network-related issues
-                error_message = f"Download error (Attempt {attempt + 1}/{max_retries}): {str(e)}"
-
-                # Log or print error
-                print(error_message)
-
-                # Provide progress update for error state
-                self.siril.update_progress(error_message, 0.0)
-
-                # Wait before retrying, with exponential backoff
-                time.sleep(retry_delay * (attempt + 1))
-
-            except Exception as e:
-                # Catch any unexpected errors
-                error_message = f"Unexpected error during download: {str(e)}"
-                print(error_message)
-
-                self.siril.update_progress(error_message, 0.0)
-
-                raise RuntimeError(error_message)
-
-        # All retry attempts failed
-        raise RuntimeError(f"Failed to download file from {url} after {max_retries} attempts")
-
     def decompress_with_progress(self, bz2_path, decompressed_path):
         print(f"Decompressing {bz2_path} to {decompressed_path}...")
 
@@ -466,7 +335,7 @@ class SirilCatInstallerInterface:
             else:
                 # Download the .bz2 file with progress reporting
                 print(f"Downloading {bz2_url} to {bz2_path}...")
-                self.download_with_progress(bz2_url, bz2_path)
+                s.download_with_progress(self.siril, bz2_url, bz2_path)
                 if not self.verify_sha256sum(bz2_path, sha256sum_path):
                     print("Checksum verification error, unable to proceed.")
                     return
@@ -529,7 +398,7 @@ class SirilCatInstallerInterface:
                     # Download the .bz2 file with progress reporting
                     print(f"Downloading {bz2_url} to {bz2_path}...")
                     try:
-                        download_successful = self.download_with_progress(bz2_url, bz2_path)
+                        download_successful = s.download_with_progress(self.siril, bz2_url, bz2_path)
                     except RuntimeError as e:
                         self.siril.log(f"Download error: {e}")
                         self.siril.reset_progress()
