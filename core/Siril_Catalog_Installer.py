@@ -60,11 +60,13 @@ class SirilCatInstallerInterface:
                 self.siril.error_messagebox("Failed to connect to Siril")
             else:
                 print("Failed to connect to Siril")
-            return
+            sys.exit(1)
 
+        print("connected")
         try:
-            siril.cmd("requires", "1.3.6")
-        except:
+            self.siril.cmd("requires", "1.3.6")
+        except RuntimeError as e:
+            self.close_dialog()
             return
 
         self.catalog_path = self.siril.get_siril_userdatadir()
@@ -72,6 +74,11 @@ class SirilCatInstallerInterface:
         if root:
             self.create_widgets()
             tksiril.match_theme_to_siril(self.root, self.siril)
+
+    def close_dialog(self):
+        self.siril.disconnect()
+        self.root.quit()
+        self.root.destroy()
 
     def create_widgets(self):
         # Main frame with no padding

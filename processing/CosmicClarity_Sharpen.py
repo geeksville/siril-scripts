@@ -49,11 +49,6 @@ class SirilCosmicClarityInterface:
             self.close_dialog()
             return
 
-        if not self.siril.cmd("requires", "1.3.6"):
-            messagebox.showerror("Error", "Siril version requirement not met")
-            self.close_dialog()
-            return
-
         self.config_executable = self.check_config_file()
         tksiril.match_theme_to_siril(self.root, self.siril)
 
