@@ -19,10 +19,11 @@ from tkinter import ttk
 from ttkthemes import ThemedTk
 from sirilpy import LogColor, tksiril
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 # 1.0.0 Original release by Rich Stevenson
 # 1.0.1 Minor edit by Adrian Knagg-Baugh to reflect changes to LogColor names
+# 1.0.2 AKB: convert "requires" to use exception handling
 
 class StarReductionInterface:
     def __init__(self, root):
@@ -60,7 +61,9 @@ class StarReductionInterface:
     
         # Check Siril version
         require_version = "1.3.6"
-        if not self.siril.cmd("requires", require_version):
+        try:
+            self.siril.cmd("requires", require_version)
+        except:
             self.siril.error_messagebox(f"This script requires Siril version {require_version} or later!")
             return False
             

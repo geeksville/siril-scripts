@@ -1,5 +1,7 @@
 # (c) Adrian Knagg-Baugh 2024
 # SPDX-License-Identifier: GPL-3.0-or-later
+# Version 1.0.1
+# 1.0.1: AKB - convert "requires" to use exception handling
 
 import sirilpy as s
 # Ensure dependencies are installed
@@ -18,7 +20,7 @@ from sirilpy import tksiril
 import numpy as np
 import tiffile
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 class CosmicClarityInterface:
     def __init__(self, root):
@@ -41,7 +43,9 @@ class CosmicClarityInterface:
             self.close_dialog()
             return
 
-        if not self.siril.cmd("requires", "1.3.6"):
+        try:
+            self.siril.cmd("requires", "1.3.6")
+        except:
             self.close_dialog()
             return
 

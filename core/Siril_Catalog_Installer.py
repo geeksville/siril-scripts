@@ -2,15 +2,16 @@
 # Siril Catalog Installer
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 1.0.0
+# Version 1.0.5
 # Version history:
 # 1.0.0 Initial release
 # 1.0.1 Update SPCC DOI number to reflect fixed catalog
 # 1.0.2 Cyril Richard: Fix paths with spaces in catalog installation directories
 # 1.0.3 Adrian Knagg-Baugh: Fix paths with backslashes in catalog installation directories
 # 1.0.4 Adrian Knagg-Baugh: Improve error handling, adding retries and resume
+# 1.0.5 AKB: convert "requires" to use exception handling
 
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 
 # Catalog retrieval details
 ASTRO_RECORD = 14692304
@@ -61,7 +62,9 @@ class SirilCatInstallerInterface:
                 print("Failed to connect to Siril")
             return
 
-        if not self.siril.cmd("requires", "1.3.6"):
+        try:
+            siril.cmd("requires", "1.3.6")
+        except:
             return
 
         self.catalog_path = self.siril.get_siril_userdatadir()

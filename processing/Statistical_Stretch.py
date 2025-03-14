@@ -2,7 +2,7 @@
 # Code From Seti Astro Statistical Stretch
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 1.0.0
+# Version 1.0.1
 
 import sirilpy as s
 s.ensure_installed("ttkthemes")
@@ -18,7 +18,8 @@ from ttkthemes import ThemedTk
 from sirilpy import tksiril
 import numpy as np
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
+# 1.0.1 AKB: convert "requires" to exception handling
 
 class StatisticalStretchInterface:
     def __init__(self, root=None, cli_args=None):
@@ -56,7 +57,9 @@ class StatisticalStretchInterface:
                 print("No image is loaded")
             return
 
-        if not self.siril.cmd("requires", "1.3.6"):
+        try:
+            self.siril.cmd("requires", "1.3.6")
+        except:
             return
 
         if root:
