@@ -2,11 +2,7 @@
 # Code From Seti Astro Statistical Stretch
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-<<<<<<< Updated upstream
-# Version 1.0.1
-=======
 # Version 1.0.2
->>>>>>> Stashed changes
 
 import sirilpy as s
 s.ensure_installed("ttkthemes")
@@ -23,14 +19,9 @@ from sirilpy import tksiril
 import numpy as np
 import math
 
-<<<<<<< Updated upstream
-VERSION = "1.0.1"
-# 1.0.1 AKB: convert "requires" to exception handling
-=======
 VERSION = "1.0.2"
 # 1.0.1 AKB: convert "requires" to exception handling
 # 1.0.2 CR: round down slider values
->>>>>>> Stashed changes
 
 class StatisticalStretchInterface:
     def __init__(self, root=None, cli_args=None):
