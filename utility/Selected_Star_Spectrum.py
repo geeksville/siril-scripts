@@ -9,10 +9,12 @@
 # therefore excluded from the catalogue.)
 
 import sirilpy as s
-s.ensure_installed("astropy", "astroquery", "GaiaXPy")
+s.ensure_installed("astropy", "astroquery", "GaiaXPy", "certifi", "ssl")
 import sys
+import ssl
 import argparse
 from astropy.coordinates import SkyCoord
+import astropy.utils.data
 import astropy.units as u
 import numpy as np
 from astroquery.gaia import Gaia
@@ -81,6 +83,10 @@ def plot_spectrum(siril, from_cli, fmt):
         print(f"Error querying Gaia DR3: {e}")
 
 def main():
+    # Configure astropy to use certifi certificates
+    astropy.utils.data._url_helpers._get_http_headers = lambda url: {}
+    ssl._create_default_https_context = ssl._create_unverified_context
+
     parser = argparse.ArgumentParser(description="Siril Script to Plot the Spectrum of a Selected Star")
     parser.add_argument("-x", type=int,default=-1,
                         help="x position of center of search box")
