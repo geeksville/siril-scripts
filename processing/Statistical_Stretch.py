@@ -2,7 +2,11 @@
 # Code From Seti Astro Statistical Stretch
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
+<<<<<<< Updated upstream
 # Version 1.0.1
+=======
+# Version 1.0.2
+>>>>>>> Stashed changes
 
 import sirilpy as s
 s.ensure_installed("ttkthemes")
@@ -17,9 +21,16 @@ from tkinter import ttk, filedialog, messagebox
 from ttkthemes import ThemedTk
 from sirilpy import tksiril
 import numpy as np
+import math
 
+<<<<<<< Updated upstream
 VERSION = "1.0.1"
 # 1.0.1 AKB: convert "requires" to exception handling
+=======
+VERSION = "1.0.2"
+# 1.0.1 AKB: convert "requires" to exception handling
+# 1.0.2 CR: round down slider values
+>>>>>>> Stashed changes
 
 class StatisticalStretchInterface:
     def __init__(self, root=None, cli_args=None):
@@ -71,6 +82,23 @@ class StatisticalStretchInterface:
                          cli_args.linked or cli_args.normalize):
             self.apply_changes(from_cli=True)
 
+    def floor_value(self, value, decimals=2):
+        """Floor a value to the specified number of decimal places"""
+        factor = 10 ** decimals
+        return math.floor(value * factor) / factor
+
+    def update_target_median_display(self, *args):
+        """Update the displayed target median value with floor rounding"""
+        value = self.target_median_var.get()
+        rounded_value = self.floor_value(value)
+        self.target_median_display_var.set(f"{rounded_value:.2f}")
+
+    def update_curves_boost_display(self, *args):
+        """Update the displayed curves boost value with floor rounding"""
+        value = self.curves_boost_var.get()
+        rounded_value = self.floor_value(value)
+        self.curves_boost_display_var.set(f"{rounded_value:.2f}")
+
     def create_widgets(self):
         # Main frame with no padding
         main_frame = ttk.Frame(self.root)
@@ -94,6 +122,11 @@ class StatisticalStretchInterface:
 
         ttk.Label(median_frame, text="Target median:").pack(side=tk.LEFT)
         self.target_median_var = tk.DoubleVar(value=self.cli_args.median)
+        self.target_median_display_var = tk.StringVar(value=f"{self.floor_value(self.cli_args.median):.2f}")
+        
+        # Add trace to update display when slider changes
+        self.target_median_var.trace_add("write", self.update_target_median_display)
+        
         target_median_scale = ttk.Scale(
             median_frame,
             from_=0.0,
@@ -105,7 +138,7 @@ class StatisticalStretchInterface:
         target_median_scale.pack(side=tk.LEFT, padx=10, expand=True)
         ttk.Label(
             median_frame,
-            textvariable=self.target_median_var,
+            textvariable=self.target_median_display_var,
             width=5,
             style="Value.TLabel"
         ).pack(side=tk.LEFT)
@@ -115,7 +148,6 @@ class StatisticalStretchInterface:
         options_frame = ttk.LabelFrame(main_frame, text="Options", padding=10)
         options_frame.pack(fill=tk.X, padx=5, pady=10)
 
-        # Linked Stretch checkbox
         # Linked Stretch checkbox
         self.linked_stretch_var = tk.BooleanVar(value=self.cli_args.linked)
         linked_stretch_checkbox = ttk.Checkbutton(
@@ -157,6 +189,11 @@ class StatisticalStretchInterface:
         ttk.Label(self.curves_boost_frame, text="Curves Boost:").pack(side=tk.LEFT)
 
         self.curves_boost_var = tk.DoubleVar(value=self.cli_args.boost)
+        self.curves_boost_display_var = tk.StringVar(value=f"{self.floor_value(self.cli_args.boost):.2f}")
+        
+        # Add trace to update display when slider changes
+        self.curves_boost_var.trace_add("write", self.update_curves_boost_display)
+        
         self.curves_boost_scale = ttk.Scale(
             self.curves_boost_frame,
             from_=0.0,
@@ -168,7 +205,7 @@ class StatisticalStretchInterface:
         self.curves_boost_scale.pack(side=tk.LEFT, padx=10, expand=True)
         ttk.Label(
             self.curves_boost_frame,
-            textvariable=self.curves_boost_var,
+            textvariable=self.curves_boost_display_var,
             width=5,
             style="Value.TLabel"
         ).pack(side=tk.LEFT)
@@ -261,12 +298,12 @@ class StatisticalStretchInterface:
 
                 stretched_image[channel, ...] = stretched_channel
 
-            if normalize:
-                stretched_image = stretched_image / np.max(stretched_image)
+        if normalize:
+            stretched_image = stretched_image / np.max(stretched_image)
 
-            if apply_curves:
-                stretched_image = np.clip(stretched_image, 0, None) # Make sure no negative pixels are used
-                stretched_image = np.power(stretched_image, 1.0 + curves_boost)
+        if apply_curves:
+            stretched_image = np.clip(stretched_image, 0, None) # Make sure no negative pixels are used
+            stretched_image = np.power(stretched_image, 1.0 + curves_boost)
 
         return stretched_image
 
