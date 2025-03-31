@@ -55,19 +55,21 @@ class SirilCatInstallerInterface:
         # Initialize Siril connection
         self.siril = s.SirilInterface()
 
-        if not self.siril.connect():
+        try:
+            self.siril.connect()
+        except SirilConnectionError as e:
             if root:
                 self.siril.error_messagebox("Failed to connect to Siril")
+                self.close_dialog()
             else:
                 print("Failed to connect to Siril")
-            sys.exit(1)
+            raise RuntimeError(f"Error connecting to Siril: {e}") from e
 
-        print("connected")
         try:
             self.siril.cmd("requires", "1.3.6")
-        except RuntimeError as e:
+        except CommandError as e:
             self.close_dialog()
-            return
+            raise
 
         self.catalog_path = self.siril.get_siril_userdatadir()
 
