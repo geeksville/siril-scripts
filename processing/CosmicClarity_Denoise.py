@@ -34,7 +34,9 @@ class CosmicClarityInterface:
         # Initialize Siril connection
         self.siril = s.SirilInterface()
 
-        if not self.siril.connect():
+        try:
+            self.siril.connect()
+        except s.SirilConnectionError:
             self.siril.error_messagebox("Failed to connect to Siril")
             self.close_dialog()
             return
@@ -46,7 +48,7 @@ class CosmicClarityInterface:
 
         try:
             self.siril.cmd("requires", "1.3.6")
-        except:
+        except s.CommandError:
             self.close_dialog()
             return
 
@@ -261,7 +263,7 @@ class CosmicClarityInterface:
     async def _apply_changes(self):
         try:
             # Get the processing thread
-            if self.siril.claim_thread():
+            with self.siril.image_lock():
                 mode = self.denoising_mode_var.get().lower()
                 denoise_strength = self.denoise_strength_var.get()
                 executable_path = self.executable_path_var.get()
@@ -332,13 +334,7 @@ class CosmicClarityInterface:
             print(f"Error in apply_changes: {str(e)}")
             messagebox.showerror("Error", str(e))
 
-        finally:
-            # Release the thread in the finally: block so that it is guaranteed to be released
-            self.siril.release_thread()
-
-
     def close_dialog(self):
-        self.siril.disconnect()
         self.root.quit()
         self.root.destroy()
 

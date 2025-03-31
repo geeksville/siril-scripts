@@ -31,14 +31,16 @@ class NBtoRGBstarsInterface:
         
         self.siril = s.SirilInterface()
         
-        if not self.siril.connect():
+        try:
+            self.siril.connect()
+        except s.SirilConnectionError as e:
             self.siril.error_messagebox("Failed to connect to Siril")
             self.close_dialog()
             return
             
         try:
             self.siril.cmd("requires", "1.3.6")
-        except:
+        except s.CommandError:
             messagebox.showerror("Error", "Siril version requirement not met")
             self.close_dialog()
             return
@@ -753,9 +755,7 @@ class NBtoRGBstarsInterface:
             traceback.print_exc()
     
     def close_dialog(self):
-        """Close the dialog and disconnect from Siril"""
-        if hasattr(self, 'siril'):
-            self.siril.disconnect()
+        """Close the dialog"""
         
         if hasattr(self, 'root'):
             self.root.quit()

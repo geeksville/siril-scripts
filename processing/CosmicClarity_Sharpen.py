@@ -34,7 +34,9 @@ class SirilCosmicClarityInterface:
         # Initialize Siril connection
         self.siril = s.SirilInterface()
 
-        if not self.siril.connect():
+        try:
+            self.siril.connect()
+        except s.SirilConnectionError:
             self.siril.error_messagebox("Failed to connect to Siril")
             self.close_dialog()
             return
@@ -46,7 +48,7 @@ class SirilCosmicClarityInterface:
 
         try:
             self.siril.cmd("requires", "1.3.6")
-        except:
+        except s.CommandError:
             self.close_dialog()
             return
 
@@ -230,7 +232,6 @@ class SirilCosmicClarityInterface:
         asyncio.run(self._apply_changes())
 
     def close_dialog(self):
-        self.siril.disconnect()
         self.root.quit()
         self.root.destroy()
 
@@ -293,7 +294,7 @@ class SirilCosmicClarityInterface:
     async def _apply_changes(self):
         try:
             # Claim the processing thread
-            if self.siril.claim_thread():
+            with self.siril.image_lock():
                 # Read user input values
                 mode = self.sharpening_mode_var.get()
                 stellar_amount = self.stellar_amount_var.get()
@@ -369,10 +370,6 @@ class SirilCosmicClarityInterface:
         except Exception as e:
             print(f"Error in apply_changes: {str(e)}")
             self.siril.update_progress(f"Error: {str(e)}", 0)
-
-        finally:
-            # Release the thread in the finally: block so that it is guaranteed to be released
-            self.siril.release_thread()
 
     def check_config_file(self):
         config_dir = self.siril.get_siril_configdir()

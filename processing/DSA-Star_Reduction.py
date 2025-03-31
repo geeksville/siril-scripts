@@ -36,12 +36,14 @@ class StarReductionInterface:
 
         # Connect to Siril & match theme
         self.siril = s.SirilInterface()
-        if self.siril.connect():
-            tksiril.match_theme_to_siril(self.root, self.siril)
-            self.siril.log("Connected successfully!", color=LogColor.GREEN)
-        else:
-            self.siril.log("Connection failed", color=LogColor.RED)
+        try:
+            self.siril.connect()
+        except s.SirilConnectionError as e:
+            self.siril.log("Connection failed: {e}", color=LogColor.RED)
             sys.exit()
+
+        tksiril.match_theme_to_siril(self.root, self.siril)
+        self.siril.log("Connected successfully!", color=LogColor.GREEN)
 
         # Initial checks
         if not self.initial_checks():
