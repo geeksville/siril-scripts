@@ -318,7 +318,7 @@ class StatisticalStretchInterface:
 
                 # Get current image
                 fit = self.siril.get_image()
-                fit.ensure_data_type(s.DataType.FLOAT_IMG)
+                fit.ensure_data_type(np.float32)
 
                 # Save original image for undo
                 self.siril.undo_save_state(f"StatStretch: m={target_median:.2f} l={linked_stretch} n={normalize} c={apply_curves} b={curves_boost:.2f}")
