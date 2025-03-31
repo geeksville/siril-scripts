@@ -45,7 +45,9 @@ class StatisticalStretchInterface:
         # Initialize Siril connection
         self.siril = s.SirilInterface()
 
-        if not self.siril.connect():
+        try:
+            self.siril.connect()
+        except s.SirilConnectionError:
             if root:
                 self.siril.error_messagebox("Failed to connect to Siril")
             else:
@@ -61,7 +63,7 @@ class StatisticalStretchInterface:
 
         try:
             self.siril.cmd("requires", "1.3.6")
-        except:
+        except s.CommandError:
             return
 
         if root:
@@ -301,7 +303,7 @@ class StatisticalStretchInterface:
     def apply_changes(self, from_cli=False):
         try:
             # Get the thread
-            if self.siril.claim_thread():
+            with self.siril.image_lock():
                 # Determine parameters: prefer CLI args if provided, else use GUI values
                 if from_cli and self.cli_args:
                     target_median = self.cli_args.median
@@ -337,8 +339,8 @@ class StatisticalStretchInterface:
                 fit.data[:] = np.clip(stretched_image, 0, 1)
                 self.siril.set_image_pixeldata(fit.data)
 
-                if from_cli:
-                    print("Statistical stretch applied successfully.")
+            if from_cli:
+                print("Statistical stretch applied successfully.")
 
         except Exception as e:
             if from_cli:
@@ -346,12 +348,7 @@ class StatisticalStretchInterface:
             else:
                 messagebox.showerror("Error", str(e))
 
-        finally:
-            # Release the thread in the finally: block so that it is guaranteed to be released
-            self.siril.release_thread()
-
     def close_dialog(self):
-        self.siril.disconnect()
         if hasattr(self, 'root'):
             self.root.quit()
             self.root.destroy()
