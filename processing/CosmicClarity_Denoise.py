@@ -10,6 +10,7 @@ s.ensure_installed("ttkthemes", "tiffile")
 import os
 import re
 import sys
+import math
 import asyncio
 import subprocess
 from pathlib import Path
@@ -52,6 +53,17 @@ class CosmicClarityInterface:
         self.config_executable = self.check_config_file()
         tksiril.match_theme_to_siril(self.root, self.siril)
         self.create_widgets()
+
+    def floor_value(self, value, decimals=2):
+        """Floor a value to the specified number of decimal places"""
+        factor = 10 ** decimals
+        return math.floor(value * factor) / factor
+
+    def update_denoise_strength_display(self, *args):
+        """Update the displayed target median value with floor rounding"""
+        value = self.denoise_strength_var.get()
+        rounded_value = self.floor_value(value)
+        self.denoise_strength_var.set(f"{rounded_value:.2f}")
 
     def create_widgets(self):
         # Main frame with no padding
@@ -128,6 +140,9 @@ class CosmicClarityInterface:
             width=5,
             style="Value.TLabel"
         ).pack(side=tk.LEFT)
+
+        # Add trace to update display when slider changes
+        self.denoise_strength_var.trace_add("write", self.update_denoise_strength_display)
 
         # Executable Selection Frame
         exec_frame = ttk.LabelFrame(main_frame, text="Cosmic Clarity Executable", padding=10)
