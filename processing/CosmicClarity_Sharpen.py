@@ -9,6 +9,7 @@ s.ensure_installed("ttkthemes", "tiffile")
 import os
 import re
 import sys
+import math
 import asyncio
 import subprocess
 from pathlib import Path
@@ -54,6 +55,23 @@ class SirilCosmicClarityInterface:
 
         # Create widgets
         self.create_widgets()
+
+    def floor_value(self, value, decimals=2):
+        """Floor a value to the specified number of decimal places"""
+        factor = 10 ** decimals
+        return math.floor(value * factor) / factor
+
+    def update_stellar_amount_display(self, *args):
+        """Update the displayed target median value with floor rounding"""
+        value = self.stellar_amount_var.get()
+        rounded_value = self.floor_value(value)
+        self.stellar_amount_var.set(f"{rounded_value:.2f}")
+
+    def update_non_stellar_strength_display(self, *args):
+        """Update the displayed target median value with floor rounding"""
+        value = self.non_stellar_strength_var.get()
+        rounded_value = self.floor_value(value)
+        self.non_stellar_strength_var.set(f"{rounded_value:.0f}")
 
     def create_widgets(self):
         # Main frame
@@ -130,6 +148,9 @@ class SirilCosmicClarityInterface:
             width=5
         ).pack(side=tk.LEFT)
 
+        # Add trace to update display when slider changes
+        self.stellar_amount_var.trace_add("write", self.update_stellar_amount_display)
+
         # Non-Stellar Strength
         non_stellar_strength_frame = ttk.Frame(options_frame)
         non_stellar_strength_frame.pack(fill=tk.X, pady=5)
@@ -150,6 +171,9 @@ class SirilCosmicClarityInterface:
             textvariable=self.non_stellar_strength_var,
             width=5
         ).pack(side=tk.LEFT)
+
+        # Add trace to update display when slider changes
+        self.non_stellar_strength_var.trace_add("write", self.update_non_stellar_strength_display)
 
         # Executable Selection Frame
         exec_frame = ttk.LabelFrame(main_frame, text="Cosmic Clarity Executable", padding=10)
