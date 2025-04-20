@@ -1,0 +1,98 @@
+#######################################################
+# Apr. 17, 2025
+# DSA-OSC_Preprocessing_with_BGE_and_Undistort v1.0
+#
+# This script:
+# ...is not for smart telescopes i.e. SeeStar.
+# ...will fail if you've used a DSLR or mirrorless camera,
+#    as the header in those images does not contain the RA/Dec coordinates for
+#    platesolving to succeed.
+#
+########### PREPROCESSING SCRIPT #####################
+# Create the following folder structure in your
+# working directory:
+#
+# Needs 4 sets of RAW images in the working
+# directory, within 4 directories:
+#   biases/
+#   flats/
+#   darks/
+#   lights/
+# Saves masters to ./masters/
+######################################################
+
+requires 1.3.6
+
+# Convert Bias Frames to .fit files
+cd biases
+convert bias -out=../process
+cd ../process
+
+# Stack Bias Frames to bias_stacked.fit
+stack bias rej 3 3 -nonorm -out=../masters/bias_stacked
+cd ..
+
+# Convert Flat Frames to .fit files
+cd flats
+convert flat -out=../process
+cd ../process
+
+# Calibrate Flat Frames
+calibrate flat -bias=../masters/bias_stacked
+
+# Stack Flat Frames to pp_flat_stacked.fit
+stack pp_flat rej 3 3 -norm=mul -out=../masters/pp_flat_stacked
+cd ..
+
+# Convert Dark Frames to .fit files
+cd darks
+convert dark -out=../process
+cd ../process
+
+# Stack Dark Frames to dark_stacked.fit
+stack dark rej 3 3 -nonorm -out=../masters/dark_stacked
+cd ..
+
+# Convert Light Frames to .fit files
+cd lights
+convert light -out=../process
+cd ../process
+
+# Calibrate Light Frames
+calibrate light -dark=../masters/dark_stacked -flat=../masters/pp_flat_stacked -cc=dark -cfa -equalize_cfa -debayer
+
+# Background Extraction 
+seqsubsky pp_light 1
+
+# Platesolve 
+load bkg_pp_light_00001
+parse $RA:ra$_$DEC:dec$
+platesolve -disto=platesolve_data.wcs
+
+# Align lights
+register bkg_pp_light -disto=file platesolve_data.wcs
+
+# Stack calibrated lights to result.fit
+stack r_bkg_pp_light rej 3 3 -norm=addscale -output_norm -rgb_equal -out=result
+
+# flip if required
+load result
+mirrorx -bottomup
+save ../result_$LIVETIME:%d$s
+
+cd ..
+close
+
+######################################################################
+#   ___                 ____                    ___       __         #
+#  / _ \___ ___ ___    / __/__  ___ ________   / _ | ___ / /________ #
+# / // / -_) -_) _ \  _\ \/ _ \/ _ `/ __/ -_) / __ |(_-</ __/ __/ _ \#
+#/____/\__/\__/ .__/ /___/ .__/\_,_/\__/\__/ /_/ |_/___/\__/_/  \___/#
+#            /_/        /_/                                          #
+#                                                                    #
+# YouTube https://www.youtube.com/@DeepSpaceAstro                    #
+# Instagram https://www.instagram.com/deepspaceastro_official/       #
+# FaceBook https://www.facebook.com/DeepSpaceAstro/                  #
+# TikTok https://www.tiktok.com/@DeepSpaceAstro                      #
+# Discord https://discord.gg/eK9nEWy2Wf                              # 
+######################################################################
