@@ -184,6 +184,7 @@ class StarReductionInterface:
         " Each image will have the selected value included in it's filename. Leaving this option"
         " checked will only create one file that will be overwritten on each run."
         "\n\n-Click Close to exit the script", True)
+        tksiril.elevate(self.root)
         
     def run_reduction(self):
         try:
