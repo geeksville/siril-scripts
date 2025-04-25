@@ -19,14 +19,20 @@ from PIL import Image, ImageTk
 import astropy
 from astropy.io import fits
 
-using_tkfilebrowser = False
+# Commented out temporarily until a fork of tkflebrowser can be
+# included in the main codebase and fixed so it works properly in
+# a flatpak environment
 # This makes the filechooser much nicer on Linux
 # Leaving the standard tk filedialog on other OSes as the native 
 # file dialog is used, which in all other cases is fine
-if sys.platform.startswith("linux"):
-    s.ensure_installed("tkfilebrowser")
-    import tkfilebrowser as filedialog
-    using_tkfilebrowser = True
+#filetypes = []
+#if sys.platform.startswith("linux"):
+#    s.ensure_installed("tkfilebrowser")
+#    import tkfilebrowser as filedialog
+#    filetypes = [("FITS files", "*.fits|*.fit|*.fts")]
+#else:
+#    filetypes = [("FITS files", "*.fits *.fit *.fts")]
+filetypes = [("FITS files", "*.fits *.fit *.fts")]
 
 VERSION = "1.0.1"
 # 1.0.1 CR: using tkfilebrowser for linux OS
@@ -380,11 +386,6 @@ class NBtoRGBstarsInterface:
             # Get the current working directory from Siril
             current_wd = self.siril.get_siril_wd() or os.path.expanduser("~")
             
-            if using_tkfilebrowser:
-                filetypes = [("FITS files", "*.fits|*.fit|*.fts")]
-            else:
-                filetypes = [("FITS files", "*.fits *.fit *.fts")]
-
             # Open file dialog in Siril's current working directory
             filename = filedialog.askopenfilename(
                 title=f"Select {image_type} FITS Image File",
