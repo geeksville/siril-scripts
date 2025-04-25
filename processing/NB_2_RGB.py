@@ -2,7 +2,7 @@
 # NBtoRGBstars for Siril - Ported from PyQt to Siril/tkinter
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 1.0.0
+# Version 1.0.1
 #
 
 import sirilpy as s
@@ -19,7 +19,17 @@ from PIL import Image, ImageTk
 import astropy
 from astropy.io import fits
 
-VERSION = "1.0.0"
+using_tkfilebrowser = False
+# This makes the filechooser much nicer on Linux
+# Leaving the standard tk filedialog on other OSes as the native 
+# file dialog is used, which in all other cases is fine
+if sys.platform.startswith("linux"):
+    s.ensure_installed("tkfilebrowser")
+    import tkfilebrowser as filedialog
+    using_tkfilebrowser = True
+
+VERSION = "1.0.1"
+# 1.0.1 CR: using tkfilebrowser for linux OS
 
 class NBtoRGBstarsInterface:
     def __init__(self, root):
@@ -370,13 +380,18 @@ class NBtoRGBstarsInterface:
             # Get the current working directory from Siril
             current_wd = self.siril.get_siril_wd() or os.path.expanduser("~")
             
+            if using_tkfilebrowser:
+                filetypes = [("FITS files", "*.fits|*.fit|*.fts")]
+            else:
+                filetypes = [("FITS files", "*.fits *.fit *.fts")]
+
             # Open file dialog in Siril's current working directory
             filename = filedialog.askopenfilename(
                 title=f"Select {image_type} FITS Image File",
                 initialdir=current_wd,
-                filetypes=[("FITS files", "*.fits *.fit *.fts")]
+                filetypes=filetypes
             )
-            
+     
             if not filename:
                 return  # User canceled
             
