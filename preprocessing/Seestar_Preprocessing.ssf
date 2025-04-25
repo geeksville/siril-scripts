@@ -16,7 +16,12 @@
 #
 # If you find that too many images are discarded
 # before stacking, you can increase the value after
-# -filter-round= in the seqapplyreg command, line 39
+# -filter-round= in the seqapplyreg command, line 47
+# Before making this change, you must make a copy of
+# this script, place it in another folder, and enter the path
+# to that folder under Scripts Storage Directories in the
+# Get Scripts sections. If you don't do this, and modify
+# the original script, it will be overwritten the next time Siril is started.
 #
 # Needs 1 set of RAW images in the working
 # directory, within 1 directory:
