@@ -4,9 +4,10 @@
 
 """
 This script provides continuum subtraction for narrowband images.
-It uses the currently loaded narrowband image in Siril and allows the user to select 
-a continuum image, then automatically determines the optimal scaling factor for subtraction
-by minimizing the noise in a user-selected region using AAD (Average Absolute Deviation).
+It uses the currently loaded narrowband image in Siril and allows the user
+to select a continuum image, then automatically determines the optimal
+scaling factor for subtraction by minimizing the nonuniformity in a
+user-selected region using AAD (Average Absolute Deviation).
 """
 
 import os
