@@ -7,7 +7,7 @@
 VERSION = "1.1.0"
 
 import sirilpy as s
-s.ensure_installed("ttkthemes", "pillow")
+s.ensure_installed("ttkthemes", "pillow", "psutil")
 
 import os
 import sys
@@ -16,6 +16,7 @@ from tkinter import ttk, filedialog, messagebox
 from ttkthemes import ThemedTk
 from sirilpy import tksiril
 import numpy as np
+import psutil
 from PIL import Image, ImageTk
 
 class BlinkInterface:
@@ -385,15 +386,23 @@ def build_frames_list(siril):
     sequence = siril.get_seq()
     if not sequence:
         return blinkframes
+    
+    # Memory check
+    available_mem = psutil.virtual_memory().available
+    mem_per_frame = sequence.rx * sequence.ry * sequence.nb_layers
+    tot_mem_needed = mem_per_frame * sequence.selnum
+    mem_ratio = siril.get_siril_config("core", "mem_ratio")
+    if tot_mem_needed > available_mem * mem_ratio:
+        siril.error_messagebox("Error: insufficient memory to blink the number of "
+                    "frames currently selected. Reduce the number of frames that "
+                    "are included using the Siril frame selector dialog.", True)
+        return blinkframes
         
     for i in range(sequence.number):
         if sequence.imgparam[i].incl:
             try:
                 # Get the raw frame data
-                frame = siril.get_seq_frame_pixeldata(i)
-                
-                # Debug information
-                print(f"Frame {i} shape: {frame.shape}, dtype: {frame.dtype}")
+                frame = siril.get_seq_frame_pixeldata(i, preview=True)
                 
                 # Check if we need to reshape the array and determine if mono or color
                 is_mono = False
@@ -433,16 +442,6 @@ def build_frames_list(siril):
                         # Convert from (height, width, channels) to (channels, height, width)
                         frame = np.transpose(frame, (2, 0, 1))
                 
-                # Convert to float64 and normalize to [0,1] range
-                max_value = 65535.0 if frame.dtype == np.uint16 else 255.0
-                frame = frame.astype(np.float32) / max_value
-                
-                # Apply autostretch
-                frame = siril_style_autostretch(frame)
-                
-                # Convert back to 8-bit for display
-                frame = (frame * 255).astype(np.uint8)
-                
                 # For PIL, convert to correct format
                 if is_mono:
                     # For mono, reshape to 2D
@@ -457,46 +456,6 @@ def build_frames_list(siril):
                 print(f"Error processing frame {i}: {str(e)}")
                 continue
     return blinkframes
-
-def siril_style_autostretch(image, sigma=3.0):
-    """
-    Perform a 'Siril-style histogram stretch' using MAD for robust contrast enhancement.
-    Parameters:
-        image (np.ndarray): Input image with shape (channels, height, width) or (height, width),
-                          assumed to be normalized to [0, 1] range.
-        sigma (float): How many MADs to stretch from the median.
-    Returns:
-        np.ndarray: Stretched image in [0, 1] range with same shape as input.
-    """
-    def stretch_channel(channel):
-        median = np.median(channel)
-        mad = np.median(np.abs(channel - median))
-        min_val = np.min(channel)
-        max_val = np.max(channel)
-        # Convert MAD to an equivalent of std (optional, keep raw MAD if preferred)
-        mad_std_equiv = mad * 1.4826
-        black_point = max(min_val, median - sigma * mad_std_equiv)
-        white_point = min(max_val, median + sigma * mad_std_equiv)
-        if white_point - black_point <= 1e-6:
-            return np.zeros_like(channel)  # Avoid divide-by-zero
-        stretched = (channel - black_point) / (white_point - black_point)
-        return np.clip(stretched, 0, 1)
-    
-    if image.ndim == 2:
-        # Single channel grayscale image (height, width)
-        return stretch_channel(image)
-    elif image.ndim == 3:
-        if image.shape[0] == 1:  # Mono image with shape (1, height, width)
-            # Process as mono but preserve the original shape
-            stretched = stretch_channel(image[0])
-            return stretched.reshape(1, *stretched.shape)
-        elif image.shape[0] == 3:  # RGB image with shape (3, height, width)
-            return np.stack([stretch_channel(image[c]) for c in range(image.shape[0])], axis=0)
-        else:
-            # Handle other channel counts (e.g., RGBA or multi-band images)
-            return np.stack([stretch_channel(image[c]) for c in range(image.shape[0])], axis=0)
-    else:
-        raise ValueError("Unsupported image dimensions for histogram stretch.")
 
 def main():
     try:
