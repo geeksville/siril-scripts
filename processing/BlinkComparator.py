@@ -2,15 +2,16 @@
 # Blink Comparator for Siril
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 1.1.0
+# Version 1.0.0
 #
-VERSION = "1.1.0"
+VERSION = "1.0.0"
 
 import sirilpy as s
 s.ensure_installed("ttkthemes", "pillow", "psutil")
 
 import os
 import sys
+import math
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from ttkthemes import ThemedTk
@@ -64,6 +65,17 @@ class BlinkInterface:
         tksiril.match_theme_to_siril(self.root, self.siril)
         self.create_widgets()
 
+    def floor_value(self, value, decimals=2):
+        """Floor a value to the specified number of decimal places"""
+        factor = 10 ** decimals
+        return math.floor(value * factor) / factor
+
+    def update_blink_speed_display(self, *args):
+        """Update the displayed target median value with floor rounding"""
+        value = self.blink_speed.get()
+        rounded_value = self.floor_value(value)
+        self.blink_speed_display_var.set(f"{rounded_value:.2f}")
+
     def create_widgets(self):
         # Main frame with paned window to allow resizing
         main_paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
@@ -109,6 +121,11 @@ class BlinkInterface:
         ttk.Label(blink_speed_frame, text="Blink duration / s:").pack(side=tk.LEFT)
 
         self.blink_speed = tk.DoubleVar(value=0.3)
+        self.blink_speed_display_var = tk.StringVar(value=f"0.30")
+
+        # Add trace to update display when slider changes
+        self.blink_speed.trace_add("write", self.update_blink_speed_display)
+
         self.blink_speed_slider = ttk.Scale(
             blink_speed_frame,
             from_=0.1,
@@ -121,8 +138,9 @@ class BlinkInterface:
 
         self.blink_speed_label = ttk.Label(
             blink_speed_frame,
-            textvariable=self.blink_speed,
-            width=5
+            textvariable=self.blink_speed_display_var,
+            width=5,
+            style="value.TLabel"
         )
         self.blink_speed_label.pack(side=tk.LEFT)
         tksiril.create_tooltip(self.blink_speed_slider, "Adjust the duration of "
