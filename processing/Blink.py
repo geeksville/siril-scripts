@@ -2,9 +2,9 @@
 # Blink Comparator for Siril
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 1.0.0
+# Version 1.1.0
 #
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 import sirilpy as s
 s.ensure_installed("ttkthemes", "pillow")
@@ -55,6 +55,8 @@ class BlinkInterface:
         self.zoom_factor = 1.0
         self.preview_image = None
         self.blink_frames = []
+        self.photo_images = []
+        self.canvas_image_ids = []
         self.current_frame_index = 0
 
         # Create the UI
@@ -227,17 +229,49 @@ class BlinkInterface:
         """Increase zoom level"""
         if self.zoom_factor < 20.0:
             self.zoom_factor *= 1.25
-            # If we're currently blinking, update the display
-            if self.is_blinking and hasattr(self, 'blink_frames') and self.blink_frames:
-                self.display_current_frame()
+            self.update_zoom()
 
     def zoom_out(self):
         """Decrease zoom level"""
         if self.zoom_factor > 0.1:
             self.zoom_factor /= 1.25
-            # If we're currently blinking, update the display
-            if self.is_blinking and hasattr(self, 'blink_frames') and self.blink_frames:
-                self.display_current_frame()
+            self.update_zoom()
+
+    def update_zoom(self):
+        """Update all images with the new zoom factor"""
+        if not hasattr(self, 'blink_frames') or not self.blink_frames:
+            return
+            
+        # Clear canvas and existing image references
+        self.canvas.delete("all")
+        self.photo_images = []
+        self.canvas_image_ids = []
+        
+        # Calculate new dimensions
+        zoomed_width = int(self.original_width * self.zoom_factor)
+        zoomed_height = int(self.original_height * self.zoom_factor)
+        
+        # Create and add all frames to the canvas
+        for i, pil_image in enumerate(self.blink_frames):
+            if self.zoom_factor != 1.0:
+                zoomed_image = pil_image.resize((zoomed_width, zoomed_height), Image.LANCZOS)
+            else:
+                zoomed_image = pil_image
+                
+            # Convert to PhotoImage
+            photo_image = ImageTk.PhotoImage(zoomed_image)
+            self.photo_images.append(photo_image)
+            
+            # Add image to canvas with state hidden (except first one)
+            state = 'normal' if i == self.current_frame_index else 'hidden'
+            image_id = self.canvas.create_image(0, 0, anchor=tk.NW, image=photo_image, state=state)
+            self.canvas_image_ids.append(image_id)
+        
+        # Configure scrollregion
+        self.canvas.config(scrollregion=(0, 0, zoomed_width, zoomed_height))
+        
+        # Force update of the preview
+        self.root.update_idletasks()
 
     def fit_to_preview(self):
         """Fit image to preview window"""
@@ -254,10 +288,9 @@ class BlinkInterface:
 
         # Use the smaller ratio to ensure image fits completely
         self.zoom_factor = min(width_ratio, height_ratio)
-
-        # If we're currently blinking, update the display
-        if self.is_blinking:
-            self.display_current_frame()
+        
+        # Update all images with new zoom
+        self.update_zoom()
 
     def blink_compare(self):
         # Stop any existing blinking
@@ -271,7 +304,7 @@ class BlinkInterface:
             self.status_label.config(text="No frames selected for blinking.")
             return
             
-        self.status_label.config(text=f"Blinking {len(frames)} frames...")
+        self.status_label.config(text=f"Setting up {len(frames)} frames...")
         self.root.update_idletasks()  # Force UI update
         
         # Store the frames for reference
@@ -281,44 +314,32 @@ class BlinkInterface:
         # Store original size of first frame
         self.original_width, self.original_height = frames[0].size
         
+        # Create the PhotoImages and canvas images
+        self.update_zoom()
+        
         # Start the blinking process
         self.is_blinking = True
-        self.display_current_frame()
+        self.update_display_state()
         
         # Schedule the next frame
         self.blink_timer_id = self.root.after(int(self.blink_speed.get() * 1000), self.next_frame)
 
-    def display_current_frame(self):
-        """Display the current frame on the canvas with proper zoom"""
-        if not hasattr(self, 'blink_frames') or not self.blink_frames:
+    def update_display_state(self):
+        """Update which frame is visible based on current_frame_index"""
+        if not self.canvas_image_ids:
             return
             
-        # Get the current frame
-        pil_image = self.blink_frames[self.current_frame_index]
+        # Hide all images
+        for img_id in self.canvas_image_ids:
+            self.canvas.itemconfigure(img_id, state='hidden')
+            
+        # Show only the current frame
+        self.canvas.itemconfigure(self.canvas_image_ids[self.current_frame_index], state='normal')
         
-        # Apply zoom
-        zoomed_width = int(self.original_width * self.zoom_factor)
-        zoomed_height = int(self.original_height * self.zoom_factor)
-        
-        if self.zoom_factor != 1.0:
-            pil_image = pil_image.resize((zoomed_width, zoomed_height), Image.LANCZOS)
-        
-        # Convert to PhotoImage
-        self.preview_image = ImageTk.PhotoImage(pil_image)
-        
-        # Clear previous image
-        self.canvas.delete("all")
-        
-        # Create image on canvas
-        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.preview_image)
-        
-        # Configure scrollregion
-        self.canvas.config(scrollregion=(0, 0, zoomed_width, zoomed_height))
-        
-        # Update status label with current frame information
+        # Update status label
         self.status_label.config(text=f"Blinking: frame {self.current_frame_index + 1} of {len(self.blink_frames)}")
         
-        # Force update of the preview
+        # Force update of the display
         self.root.update_idletasks()
 
     def next_frame(self):
@@ -329,8 +350,8 @@ class BlinkInterface:
         # Move to the next frame, cycling back to the start if needed
         self.current_frame_index = (self.current_frame_index + 1) % len(self.blink_frames)
         
-        # Display the new current frame
-        self.display_current_frame()
+        # Update which frame is visible
+        self.update_display_state()
         
         # Schedule the next frame update
         self.blink_timer_id = self.root.after(int(self.blink_speed.get() * 1000), self.next_frame)
@@ -374,97 +395,108 @@ def build_frames_list(siril):
                 # Debug information
                 print(f"Frame {i} shape: {frame.shape}, dtype: {frame.dtype}")
                 
-                # Check if we need to reshape the array
-                if len(frame.shape) != 3 or frame.shape[0] == 1:
-                    # Try to reshape the array based on the sequence information
+                # Check if we need to reshape the array and determine if mono or color
+                is_mono = False
+                
+                if len(frame.shape) == 2:
+                    # This is a mono image (height, width)
+                    is_mono = True
+                    height, width = frame.shape
+                    # Convert to 3D array with one channel for consistent processing
+                    frame = frame.reshape(1, height, width)
+                elif len(frame.shape) == 1:
+                    # This is a flattened array, we need to determine if it's mono or color
                     width = sequence.rx
                     height = sequence.ry
-                    channels = 3  # Assuming RGB
                     
-                    # Try to reshape to proper dimensions (channels, height, width)
-                    try:
-                        frame = frame.reshape(channels, height, width)
-                    except:
-                        # If reshaping fails, try another approach
+                    # Check if it's a mono image by looking at the size
+                    if frame.size == width * height:
+                        is_mono = True
+                        frame = frame.reshape(1, height, width)
+                    else:
+                        # Assume it's color with 3 channels
+                        channels = 3
                         try:
-                            # Maybe it's a flattened array
-                            frame = frame.reshape(height, width, channels)
-                            # Convert to channels-first format
-                            frame = np.transpose(frame, (2, 0, 1))
+                            frame = frame.reshape(channels, height, width)
                         except:
-                            print(f"Could not reshape frame {i}")
-                            continue
+                            # If reshaping fails, try another approach
+                            try:
+                                frame = frame.reshape(height, width, channels)
+                                # Convert to channels-first format
+                                frame = np.transpose(frame, (2, 0, 1))
+                            except:
+                                print(f"Could not reshape frame {i}")
+                                continue
+                elif len(frame.shape) == 3:
+                    # Already a 3D array, but check if it's in the right format
+                    if frame.shape[0] != 3 and frame.shape[2] == 3:
+                        # Convert from (height, width, channels) to (channels, height, width)
+                        frame = np.transpose(frame, (2, 0, 1))
                 
                 # Convert to float64 and normalize to [0,1] range
                 max_value = 65535.0 if frame.dtype == np.uint16 else 255.0
-                frame = frame.astype(np.float64) / max_value
+                frame = frame.astype(np.float32) / max_value
                 
-                # Apply MTF processing
-                m = compute_optimum_m(frame, 0.2)
-                apply_mtf_inplace(frame, m)
+                # Apply autostretch
+                frame = siril_style_autostretch(frame)
                 
                 # Convert back to 8-bit for display
                 frame = (frame * 255).astype(np.uint8)
                 
-                # PIL expects (height, width, channels) for RGB
-                if frame.shape[0] == 3:  # If channels-first
+                # For PIL, convert to correct format
+                if is_mono:
+                    # For mono, reshape to 2D
+                    pil_image = Image.fromarray(frame[0], 'L')
+                else:
+                    # For color, convert to (height, width, channels) which PIL expects
                     frame = np.transpose(frame, (1, 2, 0))
+                    pil_image = Image.fromarray(frame, 'RGB')
                 
-                # Convert to PIL Image
-                frame = Image.fromarray(frame)
-                blinkframes.append(frame)
+                blinkframes.append(pil_image)
             except Exception as e:
                 print(f"Error processing frame {i}: {str(e)}")
                 continue
     return blinkframes
-def compute_optimum_m(image: np.ndarray, target_mean: float) -> float:
-    """
-    Compute the optimum midtone value 'm' for an image.
 
+def siril_style_autostretch(image, sigma=3.0):
+    """
+    Perform a 'Siril-style histogram stretch' using MAD for robust contrast enhancement.
     Parameters:
-    - image: numpy array of shape (channels, height, width), normalized to [0, 1].
-    - target_mean: desired mean brightness, between 0 and 1.
-
+        image (np.ndarray): Input image with shape (channels, height, width) or (height, width),
+                          assumed to be normalized to [0, 1] range.
+        sigma (float): How many MADs to stretch from the median.
     Returns:
-    - optimum midtone value 'm' (float between 0 and 1).
+        np.ndarray: Stretched image in [0, 1] range with same shape as input.
     """
-    # Compute current mean across all channels and pixels
-    current_mean = np.mean(image)
-
-    # Compute numerator and denominator
-    numerator = target_mean
-    denominator = current_mean + (target_mean - 2 * current_mean * target_mean)
-
-    if denominator == 0:
-        return 0.5  # fallback safe value
-
-    m = numerator / denominator
-    # Clamp m to [0, 1] just in case of numerical issues
-    return np.clip(m, 0.0, 1.0)
-
-def apply_mtf_inplace(image: np.ndarray, m: float) -> None:
-    """
-    Apply the Midtone Transfer Function (MTF) to an image, modifying it in-place.
-
-    Parameters:
-    - image: numpy array of shape (channels, height, width), normalized to [0, 1].
-    - m: midtone value, between 0 and 1.
-
-    Returns:
-    - None (the input array is modified directly).
-    """
-    if m <= 0:
-        image.fill(0.0)
-        return
-    if m >= 1:
-        image.fill(1.0)
-        return
-
-    # Perform the MTF calculation in-place
-    np.divide(image, image * (1.0 - m) + m, out=image)
-
-    # Clamp in-place to [0, 1]
-    np.clip(image, 0.0, 1.0, out=image)
+    def stretch_channel(channel):
+        median = np.median(channel)
+        mad = np.median(np.abs(channel - median))
+        min_val = np.min(channel)
+        max_val = np.max(channel)
+        # Convert MAD to an equivalent of std (optional, keep raw MAD if preferred)
+        mad_std_equiv = mad * 1.4826
+        black_point = max(min_val, median - sigma * mad_std_equiv)
+        white_point = min(max_val, median + sigma * mad_std_equiv)
+        if white_point - black_point <= 1e-6:
+            return np.zeros_like(channel)  # Avoid divide-by-zero
+        stretched = (channel - black_point) / (white_point - black_point)
+        return np.clip(stretched, 0, 1)
+    
+    if image.ndim == 2:
+        # Single channel grayscale image (height, width)
+        return stretch_channel(image)
+    elif image.ndim == 3:
+        if image.shape[0] == 1:  # Mono image with shape (1, height, width)
+            # Process as mono but preserve the original shape
+            stretched = stretch_channel(image[0])
+            return stretched.reshape(1, *stretched.shape)
+        elif image.shape[0] == 3:  # RGB image with shape (3, height, width)
+            return np.stack([stretch_channel(image[c]) for c in range(image.shape[0])], axis=0)
+        else:
+            # Handle other channel counts (e.g., RGBA or multi-band images)
+            return np.stack([stretch_channel(image[c]) for c in range(image.shape[0])], axis=0)
+    else:
+        raise ValueError("Unsupported image dimensions for histogram stretch.")
 
 def main():
     try:
