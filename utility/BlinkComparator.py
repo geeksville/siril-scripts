@@ -47,9 +47,9 @@ class BlinkInterface:
             return
 
         try:
-            self.siril.cmd("requires", "1.3.6")
+            self.siril.cmd("requires", "1.4.0-beta2")
         except s.CommandError:
-            messagebox.showerror("Error", "Siril version requirement not met")
+            messagebox.showerror("Error", "Siril version requirement not met: 1.4.0-beta2 or higher is required")
             self.close_dialog()
             return
 
