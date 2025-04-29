@@ -1,3 +1,11 @@
+"""
+Blink comparator utility script for Siril. This script blinks the
+selected frames of the currently loaded sequence, so before running
+it a sequence must be loaded and before clicking "Blink" the Siril
+sequence frame selector must be used to select the frames that you
+want to blink.
+"""
+
 # (c) Adrian Knagg-Baugh 2025
 # Blink Comparator for Siril
 # SPDX-License-Identifier: GPL-3.0-or-later
@@ -6,21 +14,22 @@
 #
 VERSION = "1.0.0"
 
-import sirilpy as s
-s.ensure_installed("ttkthemes", "pillow", "psutil")
-
-import os
 import sys
 import math
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, messagebox
+
+import sirilpy as s
+s.ensure_installed("ttkthemes", "pillow", "psutil")
+
 from ttkthemes import ThemedTk
 from sirilpy import tksiril
 import numpy as np
 import psutil
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk # pylint: disable=no-name-in-module
 
 class BlinkInterface:
+    """ Blink Interface class """
     def __init__(self, root):
         self.root = root
         self.root.title(f"Blink Comparator for Siril - v{VERSION}")
@@ -33,7 +42,7 @@ class BlinkInterface:
         try:
             self.siril.connect()
         except s.SirilConnectionError as e:
-            self.siril.error_messagebox("Failed to connect to Siril")
+            self.siril.error_messagebox(f"Failed to connect to Siril: {e}")
             self.close_dialog()
             return
 
@@ -61,6 +70,11 @@ class BlinkInterface:
         self.canvas_image_ids = []
         self.current_frame_index = 0
 
+        self.original_width = 0
+        self.original_height = 0
+
+        self.blink_timer_id = -1
+
         # Create the UI
         tksiril.match_theme_to_siril(self.root, self.siril)
         self.create_widgets()
@@ -70,13 +84,14 @@ class BlinkInterface:
         factor = 10 ** decimals
         return math.floor(value * factor) / factor
 
-    def update_blink_speed_display(self, *args):
+    def update_blink_speed_display(self, *args): # pylint: disable=unused-argument
         """Update the displayed target median value with floor rounding"""
         value = self.blink_speed.get()
         rounded_value = self.floor_value(value)
         self.blink_speed_display_var.set(f"{rounded_value:.2f}")
 
     def create_widgets(self):
+        """ Creates the UI widgets """
         # Main frame with paned window to allow resizing
         main_paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
         main_paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -121,7 +136,7 @@ class BlinkInterface:
         ttk.Label(blink_speed_frame, text="Blink duration / s:").pack(side=tk.LEFT)
 
         self.blink_speed = tk.DoubleVar(value=0.3)
-        self.blink_speed_display_var = tk.StringVar(value=f"0.30")
+        self.blink_speed_display_var = tk.StringVar(value="0.30")
 
         # Add trace to update display when slider changes
         self.blink_speed.trace_add("write", self.update_blink_speed_display)
@@ -210,8 +225,12 @@ class BlinkInterface:
 
         # Create a canvas with scrollbars
         self.canvas = tk.Canvas(self.canvas_frame, bg="black", highlightthickness=0)
-        h_scrollbar = ttk.Scrollbar(self.canvas_frame, orient=tk.HORIZONTAL, command=self.canvas.xview)
-        v_scrollbar = ttk.Scrollbar(self.canvas_frame, orient=tk.VERTICAL, command=self.canvas.yview)
+        h_scrollbar = ttk.Scrollbar(self.canvas_frame,
+                                    orient=tk.HORIZONTAL,
+                                    command=self.canvas.xview)
+        v_scrollbar = ttk.Scrollbar(self.canvas_frame,
+                                    orient=tk.VERTICAL,
+                                    command=self.canvas.yview)
 
         # Configure the canvas
         self.canvas.config(xscrollcommand=h_scrollbar.set, yscrollcommand=v_scrollbar.set)
@@ -232,12 +251,15 @@ class BlinkInterface:
         self.canvas.bind("<Button-5>", self.mouse_wheel)    # Linux scroll down
 
     def start_pan(self, event):
+        """ Callback to start panning """
         self.canvas.scan_mark(event.x, event.y)
 
     def pan_image(self, event):
+        """ Callback to pan the image """
         self.canvas.scan_dragto(event.x, event.y, gain=1)
 
     def mouse_wheel(self, event):
+        """ Callback to handle zoom using the mouse wheel """
         # Handle zoom with mouse wheel
         if event.num == 4 or (hasattr(event, 'delta') and event.delta > 0):
             self.zoom_in()
@@ -260,35 +282,35 @@ class BlinkInterface:
         """Update all images with the new zoom factor"""
         if not hasattr(self, 'blink_frames') or not self.blink_frames:
             return
-            
+
         # Clear canvas and existing image references
         self.canvas.delete("all")
         self.photo_images = []
         self.canvas_image_ids = []
-        
+
         # Calculate new dimensions
         zoomed_width = int(self.original_width * self.zoom_factor)
         zoomed_height = int(self.original_height * self.zoom_factor)
-        
+
         # Create and add all frames to the canvas
         for i, pil_image in enumerate(self.blink_frames):
             if self.zoom_factor != 1.0:
-                zoomed_image = pil_image.resize((zoomed_width, zoomed_height), Image.LANCZOS)
+                zoomed_image = pil_image.resize((zoomed_width, zoomed_height), Image.LANCZOS) # pylint: disable=no-member
             else:
                 zoomed_image = pil_image
-                
+
             # Convert to PhotoImage
             photo_image = ImageTk.PhotoImage(zoomed_image)
             self.photo_images.append(photo_image)
-            
+
             # Add image to canvas with state hidden (except first one)
             state = 'normal' if i == self.current_frame_index else 'hidden'
             image_id = self.canvas.create_image(0, 0, anchor=tk.NW, image=photo_image, state=state)
             self.canvas_image_ids.append(image_id)
-        
+
         # Configure scrollregion
         self.canvas.config(scrollregion=(0, 0, zoomed_width, zoomed_height))
-        
+
         # Force update of the preview
         self.root.update_idletasks()
 
@@ -307,39 +329,40 @@ class BlinkInterface:
 
         # Use the smaller ratio to ensure image fits completely
         self.zoom_factor = min(width_ratio, height_ratio)
-        
+
         # Update all images with new zoom
         self.update_zoom()
 
     def blink_compare(self):
+        """ Carries out the actual blink comparison """
         # Stop any existing blinking
         self.stop_blinking()
-        
+
         self.status_label.config(text="Preprocessing blink data... Please wait.")
         self.root.update_idletasks()  # Force UI update
-        
+
         frames = build_frames_list(self.siril)
         if not frames:
             self.status_label.config(text="No frames selected for blinking.")
             return
-            
+
         self.status_label.config(text=f"Setting up {len(frames)} frames...")
         self.root.update_idletasks()  # Force UI update
-        
+
         # Store the frames for reference
         self.blink_frames = frames
         self.current_frame_index = 0
-        
+
         # Store original size of first frame
         self.original_width, self.original_height = frames[0].size
-        
+
         # Create the PhotoImages and canvas images
         self.update_zoom()
-        
+
         # Start the blinking process
         self.is_blinking = True
         self.update_display_state()
-        
+
         # Schedule the next frame
         self.blink_timer_id = self.root.after(int(self.blink_speed.get() * 1000), self.next_frame)
 
@@ -347,17 +370,18 @@ class BlinkInterface:
         """Update which frame is visible based on current_frame_index"""
         if not self.canvas_image_ids:
             return
-            
+
         # Hide all images
         for img_id in self.canvas_image_ids:
             self.canvas.itemconfigure(img_id, state='hidden')
-            
+
         # Show only the current frame
         self.canvas.itemconfigure(self.canvas_image_ids[self.current_frame_index], state='normal')
-        
+
         # Update status label
-        self.status_label.config(text=f"Blinking: frame {self.current_frame_index + 1} of {len(self.blink_frames)}")
-        
+        self.status_label.config(
+            text=f"Blinking: frame {self.current_frame_index + 1} of {len(self.blink_frames)}")
+
         # Force update of the display
         self.root.update_idletasks()
 
@@ -365,13 +389,13 @@ class BlinkInterface:
         """Display the next frame and schedule the next update"""
         if not self.is_blinking:
             return
-            
+
         # Move to the next frame, cycling back to the start if needed
         self.current_frame_index = (self.current_frame_index + 1) % len(self.blink_frames)
-        
+
         # Update which frame is visible
         self.update_display_state()
-        
+
         # Schedule the next frame update
         self.blink_timer_id = self.root.after(int(self.blink_speed.get() * 1000), self.next_frame)
 
@@ -379,32 +403,33 @@ class BlinkInterface:
         """Stop the blinking process"""
         if hasattr(self, 'blink_timer_id'):
             self.root.after_cancel(self.blink_timer_id)
-            
+
         self.is_blinking = False
         self.status_label.config(text="Blinking stopped.")
-        
+
     def close_dialog(self):
         """Clean up resources and close the dialog"""
         # Stop any ongoing blinking
         self.stop_blinking()
-        
+
         # Disconnect from Siril if connected
         if hasattr(self, 'siril') and self.siril:
             try:
                 self.siril.disconnect()
-            except:
-                pass
-            
+            except Exception as e:
+                print(f"Error disconnecting from Siril: {e}", file=sys.stderr)
+
         # Close the window
         self.root.destroy()
 
-# Build a list of the frames, converted to 8-bit Pillow images
 def build_frames_list(siril):
+    """ Build a list of the frames, converted to 8-bit Pillow images """
+
     blinkframes = []
     sequence = siril.get_seq()
     if not sequence:
         return blinkframes
-    
+
     # Memory check
     available_mem = psutil.virtual_memory().available
     mem_per_frame = sequence.rx * sequence.ry * sequence.nb_layers
@@ -415,16 +440,16 @@ def build_frames_list(siril):
                     "frames currently selected. Reduce the number of frames that "
                     "are included using the Siril frame selector dialog.", True)
         return blinkframes
-        
+
     for i in range(sequence.number):
         if sequence.imgparam[i].incl:
             try:
                 # Get the raw frame data
                 frame = siril.get_seq_frame_pixeldata(i, preview=True)
-                
+
                 # Check if we need to reshape the array and determine if mono or color
                 is_mono = False
-                
+
                 if len(frame.shape) == 2:
                     # This is a mono image (height, width)
                     is_mono = True
@@ -435,7 +460,7 @@ def build_frames_list(siril):
                     # This is a flattened array, we need to determine if it's mono or color
                     width = sequence.rx
                     height = sequence.ry
-                    
+
                     # Check if it's a mono image by looking at the size
                     if frame.size == width * height:
                         is_mono = True
@@ -445,13 +470,13 @@ def build_frames_list(siril):
                         channels = 3
                         try:
                             frame = frame.reshape(channels, height, width)
-                        except:
+                        except ValueError:
                             # If reshaping fails, try another approach
                             try:
                                 frame = frame.reshape(height, width, channels)
                                 # Convert to channels-first format
                                 frame = np.transpose(frame, (2, 0, 1))
-                            except:
+                            except ValueError:
                                 print(f"Could not reshape frame {i}")
                                 continue
                 elif len(frame.shape) == 3:
@@ -459,7 +484,7 @@ def build_frames_list(siril):
                     if frame.shape[0] != 3 and frame.shape[2] == 3:
                         # Convert from (height, width, channels) to (channels, height, width)
                         frame = np.transpose(frame, (2, 0, 1))
-                
+
                 # For PIL, convert to correct format
                 if is_mono:
                     # For mono, reshape to 2D
@@ -468,7 +493,7 @@ def build_frames_list(siril):
                     # For color, convert to (height, width, channels) which PIL expects
                     frame = np.transpose(frame, (1, 2, 0))
                     pil_image = Image.fromarray(frame, 'RGB')
-                
+
                 blinkframes.append(pil_image)
             except Exception as e:
                 print(f"Error processing frame {i}: {str(e)}")
@@ -476,6 +501,7 @@ def build_frames_list(siril):
     return blinkframes
 
 def main():
+    """ main entry point to the script """
     try:
         root = ThemedTk()
         app = BlinkInterface(root)
