@@ -31,19 +31,16 @@ from ttkthemes import ThemedTk
 # a flatpak environment. Commented out for the time being as I hope to make
 # it work again in the future.
 
-#filefilter = []
+filefilter = []
 # This makes the filechooser much nicer on Linux
 # Leaving the standard tk filedialog on other OSes as the native 
 # file dialog is used, which in all other cases is fine
-#if sys.platform.startswith("linux"):
-#    s.ensure_installed("tkfilebrowser")
-#    import tkfilebrowser as filedialog
-#    filefilter=[("FITS files", "*.fit|*.fits"), ("All files", "*.*")]
-#else:
-#    from tkinter import filedialog
-#    filefilter=[("FITS files", "*.fit *.fits"), ("All files", "*.*")]
-from tkinter import filedialog
-filefilter=[("FITS files", "*.fit *.fits"), ("All files", "*.*")]
+if s.check_module_version(">=0.6.0") and sys.platform.startswith("linux"):
+    import sirilpy.tkfilebrowser as filedialog
+    filefilter=[("FITS files", "*.fit|*.fits"), ("All files", "*.*")]
+else:
+    from tkinter import filedialog
+    filefilter=[("FITS files", "*.fit *.fits"), ("All files", "*.*")]
 
 VERSION = "1.0.1"
 
