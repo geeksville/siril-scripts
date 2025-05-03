@@ -1,6 +1,7 @@
 #######################################################
 # Apr. 17, 2025
 # DSA-OSC_Preprocessing_with_BGE_and_Undistort v1.0
+# v1.01 Added -force option to platesolve
 #
 # This script:
 # ...is not for smart telescopes i.e. SeeStar.
@@ -67,7 +68,7 @@ seqsubsky pp_light 1
 # Platesolve 
 load bkg_pp_light_00001
 parse $RA:ra$_$DEC:dec$
-platesolve -disto=platesolve_data.wcs
+platesolve -force -disto=platesolve_data.wcs
 
 # Align lights
 register bkg_pp_light -disto=file platesolve_data.wcs
