@@ -1,7 +1,7 @@
 #######################################################
 # Apr. 27, 2025
 # DSA-Seestar_Mosaic_Preprocessing v1.0
-#
+# v1.01 added -filter-round=2.5k
 ########### PREPROCESSING SCRIPT #####################
 # Script for Seestar Deep Sky images where 
 # darks, flats, & biases are not provided. Only 
@@ -29,7 +29,7 @@ calibrate light -debayer
 seqplatesolve pp_light -force -nocache
 
 # Align lights
-seqapplyreg pp_light -framing=max
+seqapplyreg pp_light -filter-round=2.5k -framing=max
 
 # Stack calibrated lights to result.fit
 stack r_pp_light rej 3 3 -norm=addscale -output_norm -rgb_equal -out=result
