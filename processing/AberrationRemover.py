@@ -1,6 +1,9 @@
 # Aberration Remover AI by Riccardo Alberghi
-# Script version: 1.0.0
+# Script version: 1.0.1
 # SPDX-License-Identifier: GPL-3.0-or-later
+
+# 1.0.0 Original release
+# 1.0.1 bugfix: fixed incorrect handling of 16 bits images
 
 import sirilpy as s
 from sirilpy import tksiril
@@ -45,7 +48,7 @@ import numpy as np
 import onnxruntime
 from ttkthemes import ThemedTk
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 CONFIG_FILENAME = "aberration_remover_model.conf"
 
 
@@ -267,6 +270,7 @@ class DeconvolutionAIInterface:
 
                 # Ensure pixel_data is in channels-first format.
                 original_format = None
+                original_dtype = pixel_data.dtype
                 if pixel_data.ndim == 2:
                     # Mono image, shape (H, W)
                     pixel_data = pixel_data[np.newaxis, ...]  # Convert to shape (1, H, W)
@@ -284,6 +288,10 @@ class DeconvolutionAIInterface:
                         raise ValueError("Unsupported image shape for pixel_data: {}".format(pixel_data.shape))
                 else:
                     raise ValueError("Unsupported number of dimensions for pixel_data: {}".format(pixel_data.ndim))
+
+                # Normalize if pixel values exceed [0,1]
+                if original_dtype == np.uint16:
+                    pixel_data = pixel_data.astype(np.float32) / 65535.0
 
                 # Save undo state.
                 self.siril.undo_save_state("Aberrations Remover")
@@ -381,6 +389,15 @@ class DeconvolutionAIInterface:
                     # Convert back to (H, W)
                     final_image = np.squeeze(final_image, axis=0)
                 # Else, already (C, H, W), no change needed
+
+                # Clip image to range
+                final_image = np.clip(final_image, 0.0, 1.0)
+                final_image = np.nan_to_num(final_image)
+
+                # Scale back if normalized
+                if original_dtype == np.uint16:
+                    final_image = final_image * 65535.0
+                    final_image = final_image.astype(np.uint16)
 
                 # Update the loaded image.
                 self.siril.set_image_pixeldata(final_image)
