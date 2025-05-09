@@ -14,7 +14,6 @@ user-selected region using AAD (Average Absolute Deviation).
 # 1.0.1 Bug fixes
 # 1.0.2 Improve file selection on Linux (use tkfilebrowser)
 
-
 import os
 import sys
 import math
