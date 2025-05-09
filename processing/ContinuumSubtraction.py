@@ -27,10 +27,6 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from ttkthemes import ThemedTk
 
-### This code uses tkfilebrowser, which currently doesn't work properly in
-# a flatpak environment. Commented out for the time being as I hope to make
-# it work again in the future.
-
 filefilter = []
 # This makes the filechooser much nicer on Linux
 # Leaving the standard tk filedialog on other OSes as the native 
