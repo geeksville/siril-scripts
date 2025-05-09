@@ -9,6 +9,10 @@ to select a continuum image, then automatically determines the optimal
 scaling factor for subtraction by minimizing the nonuniformity in a
 user-selected region using AAD (Average Absolute Deviation).
 """
+# Version history
+# 1.0.0 Initial release
+# 1.0.1 Bug fixes
+# 1.0.2 Improve file selection on Linux (use tkfilebrowser)
 
 import os
 import sys
@@ -38,7 +42,7 @@ else:
     from tkinter import filedialog
     filefilter=[("FITS files", "*.fit *.fits *.fts"), ("All files", "*.*")]
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 def aad(data):
     """
