@@ -11,7 +11,7 @@ s.ensure_installed("ttkthemes", "pillow", "numpy", "astropy")
 import os
 import sys
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, messagebox
 from ttkthemes import ThemedTk
 from sirilpy import tksiril
 import numpy as np
@@ -19,20 +19,13 @@ from PIL import Image, ImageTk
 import astropy
 from astropy.io import fits
 
-# Commented out temporarily until a fork of tkflebrowser can be
-# included in the main codebase and fixed so it works properly in
-# a flatpak environment
-# This makes the filechooser much nicer on Linux
-# Leaving the standard tk filedialog on other OSes as the native 
-# file dialog is used, which in all other cases is fine
-#filetypes = []
-#if sys.platform.startswith("linux"):
-#    s.ensure_installed("tkfilebrowser")
-#    import tkfilebrowser as filedialog
-#    filetypes = [("FITS files", "*.fits|*.fit|*.fts")]
-#else:
-#    filetypes = [("FITS files", "*.fits *.fit *.fts")]
-filetypes = [("FITS files", "*.fits *.fit *.fts")]
+filetypes = []
+if sys.platform.startswith("linux"):
+    import sirilpy.tkfilebrowser as filedialog
+    filetypes = [("FITS files", "*.fits|*.fit|*.fts")]
+else:
+    from tkinter import filedialog
+    filetypes = [("FITS files", "*.fits *.fit *.fts")]
 
 VERSION = "1.0.1"
 # 1.0.1 CR: using tkfilebrowser for linux OS

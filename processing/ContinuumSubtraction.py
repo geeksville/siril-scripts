@@ -37,10 +37,10 @@ filefilter = []
 # file dialog is used, which in all other cases is fine
 if s.check_module_version(">=0.6.0") and sys.platform.startswith("linux"):
     import sirilpy.tkfilebrowser as filedialog
-    filefilter=[("FITS files", "*.fit|*.fits"), ("All files", "*.*")]
+    filefilter=[("FITS files", "*.fit|*.fits|*.fts"), ("All files", "*.*")]
 else:
     from tkinter import filedialog
-    filefilter=[("FITS files", "*.fit *.fits"), ("All files", "*.*")]
+    filefilter=[("FITS files", "*.fit *.fits *.fts"), ("All files", "*.*")]
 
 VERSION = "1.0.1"
 
