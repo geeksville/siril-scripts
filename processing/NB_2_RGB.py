@@ -20,7 +20,7 @@ import astropy
 from astropy.io import fits
 
 filetypes = []
-if sys.platform.startswith("linux"):
+if sys.platform.startswith("linux") and s.check_module_version(">=0.6.0"):
     import sirilpy.tkfilebrowser as filedialog
     filetypes = [("FITS files", "*.fits|*.fit|*.fts")]
 else:
