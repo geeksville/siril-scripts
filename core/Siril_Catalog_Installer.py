@@ -2,7 +2,7 @@
 # Siril Catalog Installer
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 1.0.5
+# Version 1.0.6
 # Version history:
 # 1.0.0 Initial release
 # 1.0.1 Update SPCC DOI number to reflect fixed catalog
@@ -10,8 +10,9 @@
 # 1.0.3 Adrian Knagg-Baugh: Fix paths with backslashes in catalog installation directories
 # 1.0.4 Adrian Knagg-Baugh: Improve error handling, adding retries and resume
 # 1.0.5 AKB: convert "requires" to use exception handling
+# 1.0.6 CME: remove unnecesary imports, add missing import for shutil, corrected errors enums
 
-VERSION = "1.0.5"
+VERSION = "1.0.6"
 
 # Catalog retrieval details
 ASTRO_RECORD = 14692304
@@ -23,21 +24,19 @@ SPCC_INDEXLEVEL = 8
 
 import sirilpy as s
 from sirilpy import tksiril
-import argparse
 import bz2
 import hashlib
 import math
 import os
 import subprocess
 import sys
-import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import urllib.request
 import numpy as np
+import shutil
 
 s.ensure_installed("astropy", "astropy_healpix", "matplotlib", "requests", "ttkthemes")
-from astropy.coordinates import SkyCoord
 import astropy.units as u
 from astropy_healpix import HEALPix
 import requests
@@ -57,7 +56,7 @@ class SirilCatInstallerInterface:
 
         try:
             self.siril.connect()
-        except SirilConnectionError as e:
+        except s.SirilConnectionError as e:
             if root:
                 self.siril.error_messagebox("Failed to connect to Siril")
                 self.close_dialog()
@@ -67,7 +66,7 @@ class SirilCatInstallerInterface:
 
         try:
             self.siril.cmd("requires", "1.3.6")
-        except CommandError as e:
+        except s.CommandError as e:
             self.close_dialog()
             raise
 
