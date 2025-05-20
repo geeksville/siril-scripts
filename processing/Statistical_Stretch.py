@@ -2,7 +2,7 @@
 # Code From Seti Astro Statistical Stretch
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 1.0.3
+# Version 1.0.2
 
 import sirilpy as s
 s.ensure_installed("ttkthemes")
@@ -19,10 +19,9 @@ from sirilpy import tksiril
 import numpy as np
 import math
 
-VERSION = "1.0.3"
+VERSION = "1.0.2"
 # 1.0.1 AKB: convert "requires" to exception handling
 # 1.0.2 CR: round down slider values
-# 1.0.3 CR: fix division by zero when target_median is 0 or 1.0
 
 class StatisticalStretchInterface:
     def __init__(self, root=None, cli_args=None):
@@ -36,10 +35,6 @@ class StatisticalStretchInterface:
             cli_args = parser.parse_args([])
 
         self.cli_args = cli_args
-        
-        # Ensure target_median is between 0.01 and 0.99
-        if hasattr(cli_args, 'median'):
-            cli_args.median = max(0.01, min(0.99, cli_args.median))
 
         if root:
             self.root = root
@@ -50,9 +45,7 @@ class StatisticalStretchInterface:
         # Initialize Siril connection
         self.siril = s.SirilInterface()
 
-        try:
-            self.siril.connect()
-        except s.SirilConnectionError:
+        if not self.siril.connect():
             if root:
                 self.siril.error_messagebox("Failed to connect to Siril")
             else:
@@ -68,7 +61,7 @@ class StatisticalStretchInterface:
 
         try:
             self.siril.cmd("requires", "1.3.6")
-        except s.CommandError:
+        except:
             return
 
         if root:
@@ -119,16 +112,16 @@ class StatisticalStretchInterface:
         median_frame.pack(fill=tk.X, pady=5)
 
         ttk.Label(median_frame, text="Target median:").pack(side=tk.LEFT)
-        self.target_median_var = tk.DoubleVar(value=max(0.01, self.cli_args.median))  # Ensure minimum value is 0.01
-        self.target_median_display_var = tk.StringVar(value=f"{self.floor_value(max(0.01, self.cli_args.median)):.2f}")
+        self.target_median_var = tk.DoubleVar(value=self.cli_args.median)
+        self.target_median_display_var = tk.StringVar(value=f"{self.floor_value(self.cli_args.median):.2f}")
         
         # Add trace to update display when slider changes
         self.target_median_var.trace_add("write", self.update_target_median_display)
         
         target_median_scale = ttk.Scale(
             median_frame,
-            from_=0.01,
-            to=0.99,
+            from_=0.0,
+            to=1.0,
             orient=tk.HORIZONTAL,
             variable=self.target_median_var,
             length=200
@@ -242,9 +235,6 @@ class StatisticalStretchInterface:
             self.curves_boost_scale.state(['disabled'])
 
     def stretch_mono_image(self, fit, target_median, normalize=False, apply_curves=False, curves_boost=0.0):
-        # Ensure target_median is between 0.01 and 0.99
-        target_median = max(0.01, min(0.99, target_median))
-        
         # Calculate black point
         black_point = max(np.min(fit.data), np.median(fit.data) - 2.7 * np.std(fit.data))
 
@@ -267,9 +257,6 @@ class StatisticalStretchInterface:
         return stretched_image
 
     def stretch_color_image(self, fit, target_median, linked=True, normalize=False, apply_curves=False, curves_boost=0.0):
-        # Ensure target_median is between 0.01 and 0.99
-        target_median = max(0.01, min(0.99, target_median))
-        
         channels, height, width = fit.data.shape
 
         if linked:
@@ -314,16 +301,16 @@ class StatisticalStretchInterface:
     def apply_changes(self, from_cli=False):
         try:
             # Get the thread
-            with self.siril.image_lock():
+            if self.siril.claim_thread():
                 # Determine parameters: prefer CLI args if provided, else use GUI values
                 if from_cli and self.cli_args:
-                    target_median = max(0.01, self.cli_args.median)  # Ensure minimum is 0.01
+                    target_median = self.cli_args.median
                     linked_stretch = self.cli_args.linked
                     normalize = self.cli_args.normalize
                     apply_curves = self.cli_args.boost is not None and self.cli_args.boost > 0
                     curves_boost = self.cli_args.boost or 0.0
                 else:
-                    target_median = max(0.01, self.target_median_var.get())  # Ensure minimum is 0.01
+                    target_median = self.target_median_var.get()
                     linked_stretch = self.linked_stretch_var.get()
                     normalize = self.normalize_var.get()
                     apply_curves = self.apply_curve_var.get()
@@ -331,7 +318,7 @@ class StatisticalStretchInterface:
 
                 # Get current image
                 fit = self.siril.get_image()
-                fit.ensure_data_type(np.float32)
+                fit.ensure_data_type(s.DataType.FLOAT_IMG)
 
                 # Save original image for undo
                 self.siril.undo_save_state(f"StatStretch: m={target_median:.2f} l={linked_stretch} n={normalize} c={apply_curves} b={curves_boost:.2f}")
@@ -350,8 +337,8 @@ class StatisticalStretchInterface:
                 fit.data[:] = np.clip(stretched_image, 0, 1)
                 self.siril.set_image_pixeldata(fit.data)
 
-            if from_cli:
-                print("Statistical stretch applied successfully.")
+                if from_cli:
+                    print("Statistical stretch applied successfully.")
 
         except Exception as e:
             if from_cli:
@@ -359,7 +346,12 @@ class StatisticalStretchInterface:
             else:
                 messagebox.showerror("Error", str(e))
 
+        finally:
+            # Release the thread in the finally: block so that it is guaranteed to be released
+            self.siril.release_thread()
+
     def close_dialog(self):
+        self.siril.disconnect()
         if hasattr(self, 'root'):
             self.root.quit()
             self.root.destroy()
@@ -367,7 +359,7 @@ class StatisticalStretchInterface:
 def main():
     parser = argparse.ArgumentParser(description="Statistical Stretch for Astronomical Images")
     parser.add_argument("-median", type=float, default=0.2,
-                        help="Target median value for stretch (0.01 to 0.99)")
+                        help="Target median value for stretch (0.0 to 1.0)")
     parser.add_argument("-boost", type=float, default=0.0,
                         help="Curves boost value (0.0 to 0.5)")
     parser.add_argument("-linked", action="store_true",
