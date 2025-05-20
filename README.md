@@ -43,6 +43,12 @@ insights from pre-processed astronomical images. This phase involves:
 - **Visualization:** Creating visual representations of your data, aiding in the 
   interpretation and communication of your findings.
 
+### 3. Utility
+
+The utility category contains scripts such as the blink comparator, which don't
+directly do image processing but still provide enhancements to Siril
+functionality in other ways.
+
 ## Contribution
 
 We believe in the power of collaboration, and that's why we invite all users to 
