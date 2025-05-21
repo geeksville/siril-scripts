@@ -12,7 +12,7 @@ as better performance it is intended to become the primary interface
 to GraXpert in the future: if you experience issues with the legacy
 GraXpert interface it is recommended to try this script instead.
 
-Script version: 1.0.0
+Script version: 1.0.1
 (c) Adrian Knagg-Baugh 2025
 SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -23,6 +23,11 @@ GraXpert is (c) the GraXpert Development Team
 GraXpert code licensed as GPL-3.0-or-later
 Models licensed as CC-BY-NC-SA-4.0
 """
+
+# Version History
+# 1.0.0 Initial release
+# 1.0.1 Bug fix in handling mono images in BGE; improved fallback behaviour
+#       for inferencing runtime errors (try again with CPU backend)
 
 import os
 import re
