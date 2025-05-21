@@ -960,7 +960,19 @@ class DenoiserProcessing:
 
             # Run inference
             output_tiles = []
-            session_result = session.run(None, {"gen_input_image": input_tiles})[0]
+
+            try:
+                session_result = session.run(None, {"gen_input_image": input_tiles})[0]
+            except onnxruntime.capi.onnxruntime_pybind11_state.RuntimeException as err:
+                error_message = str(err)
+                if "cudaErrorNoKernelImageForDevice" in error_message:
+                    print("ONNX cannot build an inferencing kernel for this GPU.")
+                    # Retry with CPU only
+                print("Falling back to CPU.")
+                providers = ['CPUExecutionProvider']
+                session = onnxruntime.InferenceSession(ai_path, providers=providers)
+                session_result = session.run(None, {"gen_input_image": input_tiles})[0]
+
             for e in session_result:
                 output_tiles.append(e)
 
@@ -1423,21 +1435,20 @@ class DeconvolutionProcessing:
             if deconv_type == "Obj" and "1.0.0" in ai_path:
                 try:
                     session_result = session.run(None, {"gen_input_image": input_tiles, "sigma": sigma, "strenght": strenght_p})[0]
-                except ort.capi.onnxruntime_pybind11_state.RuntimeException as err:
+                except onnxruntime.capi.onnxruntime_pybind11_state.RuntimeException as err:
                     error_message = str(err)
                     if "cudaErrorNoKernelImageForDevice" in error_message:
-                        print("ONNX cannot build an inferencing kernel for this GPU. Falling back to CPU.")
-                        # Retry with CPU only
-                        providers = ['CPUExecutionProvider']
-                        session = onnxruntime.InferenceSession(ai_path, providers=providers)
-                        session_result = session.run(None, {"gen_input_image": input_tiles, "sigma": sigma, "strenght": strenght_p})[0]
-                    else:
-                        # Re-raise if it's a different error
-                        raise
+                        print("ONNX cannot build an inferencing kernel for this GPU.")
+                    # Retry with CPU only
+                    print("Falling back to GPU")
+                    # Retry with CPU only
+                    providers = ['CPUExecutionProvider']
+                    session = onnxruntime.InferenceSession(ai_path, providers=providers)
+                    session_result = session.run(None, {"gen_input_image": input_tiles, "sigma": sigma, "strenght": strenght_p})[0]
             else:
                 try:
                     session_result = session.run(None, {"gen_input_image": input_tiles, "params": conds})[0]
-                except ort.capi.onnxruntime_pybind11_state.RuntimeException as err:
+                except onnxruntime.capi.onnxruntime_pybind11_state.RuntimeException as err:
                     error_message = str(err)
                     if "cudaErrorNoKernelImageForDevice" in error_message:
                         print("ONNX cannot build an inferencing kernel for this GPU. Falling back to CPU.")
@@ -1840,20 +1851,23 @@ class BGEProcessing:
         print("Starting background extraction")
 
         # Handle different image formats
+        was_mono = False
         if len(image.shape) == 2:
             # Handle grayscale image
+            was_mono = True
             image = np.expand_dims(image, -1)
-
         # Convert to hwc format if needed:
         was_planar = False
-        if image.shape[0] == 3 and len(image.shape) == 3 and image.shape[0] < image.shape[1] and image.shape[0] < image.shape[2]:
-            image = np.transpose(image, (1, 2, 0))
+        if image.shape[0] < 4 and len(image.shape) == 3 and image.shape[0] < image.shape[1] \
+                              and image.shape[0] < image.shape[2]:
             was_planar = True
+            image = np.transpose(image, (1, 2, 0))
 
         # Store original shape for later reshaping
         original_shape = image.shape
         num_colors = image.shape[-1]
-
+        if num_colors == 1:
+            was_mono = True
         # Shrink and pad to avoid artifacts on borders
         padding = 8
         if progress_callback:
@@ -1902,7 +1916,17 @@ class BGEProcessing:
             progress_callback("Running inference...", 0.4)
 
         # Run inference
-        background = session.run(None, {"gen_input_image": np.expand_dims(imarray_shrink, axis=0)})[0][0]
+        try:
+            background = session.run(None, {"gen_input_image": np.expand_dims(imarray_shrink, axis=0)})[0][0]
+        except onnxruntime.capi.onnxruntime_pybind11_state.RuntimeException as err:
+            error_message = str(err)
+            if "cudaErrorNoKernelImageForDevice" in error_message:
+                print("ONNX cannot build an inferencing kernel for this GPU.")
+            # Retry with CPU only
+            print("Falling back to GPU")
+            providers = ['CPUExecutionProvider']
+            session = onnxruntime.InferenceSession(ai_path, providers=providers)
+            background = session.run(None, {"gen_input_image": np.expand_dims(imarray_shrink, axis=0)})[0][0]
 
         if progress_callback:
             progress_callback("Post-processing...", 0.6)
@@ -1915,11 +1939,6 @@ class BGEProcessing:
             sigma = smoothing * 20
             kernel = self.gaussian_kernel(sigma)
             background = cv2.GaussianBlur(background, ksize=kernel, sigmaX=sigma, sigmaY=sigma)
-
-        # Convert back to grayscale if input was grayscale
-        if num_colors == 1:
-            background = np.array([background[:, :, 0]])
-            background = np.moveaxis(background, 0, -1)
 
         if progress_callback:
             progress_callback("Finalizing background...", 0.8)
@@ -1943,8 +1962,8 @@ class BGEProcessing:
         # Ensure output has the same shape as input
         if len(background.shape) == 2 and len(original_shape) == 3:
             background = np.expand_dims(background, -1)
-        elif len(original_shape) == 2 and len(background.shape) == 3:
-            background = background[:, :, 0]
+        elif was_mono and len(background.shape) == 3:
+            background = background[0, :, :]
 
         # Cache the extracted background
         self.cached_background_image = background
@@ -2218,6 +2237,11 @@ class GUIInterface:
 
         tksiril.match_theme_to_siril(self.root, self.siril)
 
+        self.siril.log("This script is under ongoing development. Please report any bugs to "
+            "https://gitlab.com/free-astro/siril-scripts. We are also especially keen "
+            "for confirmation of success / failure from Linux users with AMD Radeon "
+            "or Intel ARC GPUs as we do not have these hardware / OS combinations among "
+            "the development team", color=s.LogColor.BLUE)
         # Create widgets
         self.create_widgets()
 
