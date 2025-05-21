@@ -1421,9 +1421,33 @@ class DeconvolutionProcessing:
             conds = np.concatenate([sigma, strenght_p], axis=-1)
 
             if deconv_type == "Obj" and "1.0.0" in ai_path:
-                session_result = session.run(None, {"gen_input_image": input_tiles, "sigma": sigma, "strenght": strenght_p})[0]
+                try:
+                    session_result = session.run(None, {"gen_input_image": input_tiles, "sigma": sigma, "strenght": strenght_p})[0]
+                except ort.capi.onnxruntime_pybind11_state.RuntimeException as err:
+                    error_message = str(err)
+                    if "cudaErrorNoKernelImageForDevice" in error_message:
+                        print("ONNX cannot build an inferencing kernel for this GPU. Falling back to CPU.")
+                        # Retry with CPU only
+                        providers = ['CPUExecutionProvider']
+                        session = onnxruntime.InferenceSession(ai_path, providers=providers)
+                        session_result = session.run(None, {"gen_input_image": input_tiles, "sigma": sigma, "strenght": strenght_p})[0]
+                    else:
+                        # Re-raise if it's a different error
+                        raise
             else:
-                session_result = session.run(None, {"gen_input_image": input_tiles, "params": conds})[0]
+                try:
+                    session_result = session.run(None, {"gen_input_image": input_tiles, "params": conds})[0]
+                except ort.capi.onnxruntime_pybind11_state.RuntimeException as err:
+                    error_message = str(err)
+                    if "cudaErrorNoKernelImageForDevice" in error_message:
+                        print("ONNX cannot build an inferencing kernel for this GPU. Falling back to CPU.")
+                        # Retry with CPU only
+                        providers = ['CPUExecutionProvider']
+                        session = onnxruntime.InferenceSession(ai_path, providers=providers)
+                        session_result = session.run(None, {"gen_input_image": input_tiles, "sigma": sigma, "strenght": strenght_p})[0]
+                    else:
+                        # Re-raise if it's a different error
+                        raise
 
             for e in session_result:
                 output_tiles.append(e)
