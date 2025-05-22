@@ -17,10 +17,16 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from matplotlib.colors import Normalize
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
+REQUIRES_SIRILPY = "0.6.37"
 N = 11 # defines the 3D plot grid resolution
 EXAG = 0.3
 COLORMAP = cm.jet
+
+# Check if the required version of sirilpy is installed
+if not s.check_module_version(f'>={REQUIRES_SIRILPY}'):
+    print(f"Please install sirilpy version {REQUIRES_SIRILPY} or higher")
+    sys.exit(1)
 
 
 def extract_sip_from_header(header_data : dict) -> Tuple[int, NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
@@ -66,68 +72,18 @@ def extract_sip_from_header(header_data : dict) -> Tuple[int, NDArray[np.float64
     
     return order, a, b, ap, bp
 
-def parse_fits_header(header_text: str) -> dict:
-    """
-    Parse FITS header from text content into a dictionary
-    
-    Parameters:
-    header_text (str): Content of the FITS header text file
-    
-    Returns:
-    dict: Dictionary containing all header keywords and values
-    """
-    header_dict = {}
-    
-    for line in header_text.split('\n'):
-        # Skip empty lines, COMMENT, HISTORY, and END
-        if not line.strip() or line.startswith('COMMENT') or line.startswith('HISTORY') or line.startswith('END'):
-            continue
-            
-        # Split the line into key and value parts
-        parts = line.split('=')
-        if len(parts) != 2:
-            continue
-            
-        key = parts[0].strip()
-        value_part = parts[1].strip()
-        
-        # Handle the value part (removing comments after /)
-        if '/' in value_part:
-            value_part = value_part.split('/')[0].strip()
-            
-        # Convert value to appropriate type
-        try:
-            # Try converting to float first
-            if value_part.startswith("'") and value_part.endswith("'"):
-                # String value
-                value = value_part.strip("'").strip()
-            elif value_part == 'T':
-                value = True
-            elif value_part == 'F':
-                value = False
-            else:
-                value = float(value_part)
-        except ValueError:
-            # If conversion fails, keep as string
-            value = value_part.strip()
-            
-        header_dict[key] = value
-        
-    return header_dict
-
-def do_plot(header_text: str, title: str = None) -> None:
+def do_plot(hdr : dict, title: str = None) -> None:
     """
     Parses the header to a dictionary, extracts SIP coefficients, and
     shows the plot
     
     Parameters:
-    header_text (str): Content of the FITS header text file
+    hdr (dict): Content of the FITS header as dictionary
     title (str): Title of the plot
     
     Returns:
     None
     """
-    hdr = parse_fits_header(header_text)
     if not 'CTYPE1' in hdr.keys() or not 'SIP' in hdr['CTYPE1']:
         print('No distorsion info stored in this header, aborting')
         sys.exit(0)
@@ -203,10 +159,9 @@ def do_plot(header_text: str, title: str = None) -> None:
     ax.view_init(elev = 30, azim = 225)
     ax.grid(False)
 
-
     # Plot the distorsion as a coarser 2D grid
     pace = min(x[1] - x[0], y[1] - y[0])
-    exag = EXAG * pace * sampling / np.max(DR)
+    exag = EXAG * pace * sampling / np.max(np.abs(DR))
 
     ax = fig.add_subplot(122, projection = '3d')
     c_faces = np.lib.stride_tricks.sliding_window_view(DR, (2,2))
@@ -249,22 +204,21 @@ def siril_distorsion3D() -> None:
 
     try:
         if siril.is_image_loaded():
-            header = siril.get_image_fits_header()
+            header_dict = siril.get_image_fits_header(return_as = 'dict')
             filename = siril.get_image_filename()
         elif siril.is_sequence_loaded():
             seq = siril.get_seq()
-            header = siril.get_seq_frame_header(seq.current)
+            header_dict = siril.get_seq_frame_header(seq.current, return_as = 'dict')
             filename = siril.get_seq_frame_filename(seq.current)
         else:
             siril.log('No image or sequence loaded, aborting', s.LogColor.RED)
             sys.exit(1)
-        header_dict = parse_fits_header(header)
         filename = os.path.split(filename)[1]
         title = f'Distortion 3D map of {filename}'
         if not 'CTYPE1' in header_dict.keys() or not 'SIP' in header_dict['CTYPE1']:
             siril.log('No distortion info stored in this header, aborting', s.LogColor.SALMON)
             sys.exit(0)
-        do_plot(header, title)
+        do_plot(header_dict, title)
 
     except Exception as e:
       siril.log(f"Error: {e}")
