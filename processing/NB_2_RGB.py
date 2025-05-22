@@ -2,7 +2,7 @@
 # NBtoRGBstars for Siril - Ported from PyQt to Siril/tkinter
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 1.0.1
+# Version 1.0.2
 #
 
 import sirilpy as s
@@ -27,8 +27,9 @@ else:
     from tkinter import filedialog
     filetypes = [("FITS files", "*.fits *.fit *.fts")]
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 # 1.0.1 CR: using tkfilebrowser for linux OS
+# 1.0.2 CR: fixing script due to API changes
 
 class NBtoRGBstarsInterface:
     def __init__(self, root):
@@ -730,8 +731,8 @@ class NBtoRGBstarsInterface:
             siril_image_data = np.ascontiguousarray(siril_image_data)
             siril_image_data = siril_image_data[:, ::-1, :]
 
-            # Claim the thread to ensure safe image data transfer
-            if self.siril.claim_thread():
+            # Get the processing thread
+            with self.siril.image_lock():
                 try:
                     # Set the pixel data directly 
                     self.siril.set_image_pixeldata(siril_image_data)
@@ -753,9 +754,8 @@ class NBtoRGBstarsInterface:
                     # log to Siril console
                     self.siril.log(f"NBtoRGB stars combined image loaded in Siril preview")
                 
-                finally:
-                    # Always release the thread
-                    self.siril.release_thread()
+                except Exception as e:
+                    print(f"Error in apply_changes: {str(e)}")
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to apply image to Siril: {str(e)}")
