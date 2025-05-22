@@ -12,7 +12,7 @@ as better performance it is intended to become the primary interface
 to GraXpert in the future: if you experience issues with the legacy
 GraXpert interface it is recommended to try this script instead.
 
-Script version: 1.0.1
+Script version: 1.0.2
 (c) Adrian Knagg-Baugh 2025
 SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -28,12 +28,17 @@ Models licensed as CC-BY-NC-SA-4.0
 # 1.0.0 Initial release
 # 1.0.1 Bug fix in handling mono images in BGE; improved fallback behaviour
 #       for inferencing runtime errors (try again with CPU backend)
+# 1.0.2 Interim fix for MacOS to prevent issues with the CREATE_ML_PROGRAM
+#       flag; make the defaults match GraXpert (except smoothing: the
+#       default GraXpert smoothing value of 0.0 seems too low so this is
+#       set at 0.5)
 
 import os
 import re
 import sys
 import copy
 import argparse
+import platform
 import tempfile
 import threading
 import subprocess
@@ -66,7 +71,7 @@ onnx_helper.install_onnxruntime()
 
 import onnxruntime
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 DENOISE_CONFIG_FILENAME = "graxpert_denoise_model.conf"
 BGE_CONFIG_FILENAME = "graxpert_bge_model.conf"
 DECONVOLVE_STARS_CONFIG_FILENAME = "graxpert_deconv_stars_model.conf"
@@ -924,7 +929,9 @@ class DenoiserProcessing:
         print(f"Available inference providers: {onnxruntime.get_available_providers()}")
 
         # Initialize ONNX runtime session
-        providers = self.onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
+        providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider'] \
+                if platform.system().lower() == "darwin" \
+                else self.onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
         session = onnxruntime.InferenceSession(ai_path, providers=providers)
 
         print(f"Used inference providers: {session.get_providers()}")
@@ -1379,7 +1386,10 @@ class DeconvolutionProcessing:
         output = copy.deepcopy(image)
 
         # Initialize ONNX runtime session
-        providers = onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
+        providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider'] \
+                if platform.system().lower() == "darwin" \
+                else onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
+
         session = onnxruntime.InferenceSession(ai_path, providers=providers)
 
         print(f"Available inference providers: {onnxruntime.get_available_providers()}")
@@ -1912,7 +1922,10 @@ class BGEProcessing:
             progress_callback("Initializing ONNX runtime...", 0.25)
 
         # Initialize ONNX runtime session
-        providers = onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
+        providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider'] \
+                if platform.system().lower() == "darwin" \
+                else self.onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
+
         session = onnxruntime.InferenceSession(ai_path, providers=providers)
 
         print(f"Used inference providers: {session.get_providers()}")
@@ -2232,9 +2245,9 @@ class GUIInterface:
 
         # Initialize variables for UI
         self.model_path_var = tk.StringVar(value="")
-        self.strength_var = tk.DoubleVar(value=1.0)
-        self.smoothing_var = tk.DoubleVar(value=1.0)
-        self.psf_size_var = tk.DoubleVar(value=1.0)  # Default PSF size value
+        self.strength_var = tk.DoubleVar(value=0.5)
+        self.smoothing_var = tk.DoubleVar(value=0.5)
+        self.psf_size_var = tk.DoubleVar(value=5.0)  # Default PSF size value
         self.batch_size_var = tk.IntVar(value=4)
         self.keep_bg_var = tk.BooleanVar(value=False)
         self.gpu_acceleration_var = tk.BooleanVar(value=True)
@@ -2358,7 +2371,7 @@ class GUIInterface:
             length=200
         )
         strength_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.strength_value = ttk.Label(strength_frame, text="1.0")
+        self.strength_value = ttk.Label(strength_frame, text="0.5")
         self.strength_value.pack(side=tk.RIGHT, padx=5)
         tksiril.create_tooltip(strength_slider, "Adjust the denoising strength. The "
                 "result is a linear blend of the denoised image and the original, "
@@ -2386,7 +2399,7 @@ class GUIInterface:
             length=200
         )
         deconv_stars_strength_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.deconv_stars_strength_value = ttk.Label(deconv_stars_strength_frame, text="1.0")
+        self.deconv_stars_strength_value = ttk.Label(deconv_stars_strength_frame, text="0.5")
         self.deconv_stars_strength_value.pack(side=tk.RIGHT, padx=5)
         tksiril.create_tooltip(deconv_stars_strength_slider, "Adjust the deconvolution strength. The "
                 "result is a linear blend of the deconvolved image and the original, "
@@ -2408,7 +2421,7 @@ class GUIInterface:
             length=200
         )
         deconv_stars_psf_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.deconv_stars_psf_value = ttk.Label(deconv_stars_psf_frame, text="1.0")
+        self.deconv_stars_psf_value = ttk.Label(deconv_stars_psf_frame, text="5.0")
         self.deconv_stars_psf_value.pack(side=tk.RIGHT, padx=5)
         tksiril.create_tooltip(deconv_stars_psf_slider, "Adjust the PSF (Point Spread Function) size "
                 "for star deconvolution. Values from 0.1 to 10.0 are allowed.")
@@ -2428,7 +2441,7 @@ class GUIInterface:
             length=200
         )
         deconv_object_strength_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.deconv_object_strength_value = ttk.Label(deconv_object_strength_frame, text="1.0")
+        self.deconv_object_strength_value = ttk.Label(deconv_object_strength_frame, text="0.5")
         self.deconv_object_strength_value.pack(side=tk.RIGHT, padx=5)
         tksiril.create_tooltip(deconv_object_strength_slider, "Adjust the deconvolution strength. The "
                 "result is a linear blend of the deconvolved image and the original, "
@@ -2450,7 +2463,7 @@ class GUIInterface:
             length=200
         )
         deconv_object_psf_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.deconv_object_psf_value = ttk.Label(deconv_object_psf_frame, text="1.0")
+        self.deconv_object_psf_value = ttk.Label(deconv_object_psf_frame, text="5.0")
         self.deconv_object_psf_value.pack(side=tk.RIGHT, padx=5)
         tksiril.create_tooltip(deconv_object_psf_slider, "Adjust the PSF (Point Spread Function) size "
                 "for object deconvolution. Values from 0.1 to 10.0 are allowed.")
@@ -2474,7 +2487,7 @@ class GUIInterface:
             length=200
         )
         smoothing_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.smoothing_value = ttk.Label(smoothing_frame, text="1.0")
+        self.smoothing_value = ttk.Label(smoothing_frame, text="0.5")
         self.smoothing_value.pack(side=tk.RIGHT, padx=5)
         tksiril.create_tooltip(smoothing_slider, "Adjust the background extraction smoothing. "
                 "Higher values result in smoother background extraction.")
@@ -3012,7 +3025,7 @@ class DenoiserCLI:
     def parse_arguments(self, args):
         """Parse command line arguments."""
         parser = argparse.ArgumentParser(description=f"GraXpert AI Denoise - Siril CLI v{VERSION}")
-        parser.add_argument("-strength", type=float, default=1.0, help="Denoising strength (0.0-1.0)")
+        parser.add_argument("-strength", type=float, default=0.5, help="Denoising strength (0.0-1.0)")
         parser.add_argument("-batch", type=int, default=4, help="Batch size for processing")
         parser.add_argument("-model", type=str, help="Model name to use (directory name in GraXpert models folder)")
 
@@ -3196,8 +3209,8 @@ class DeconvolutionCLI:
     def parse_arguments(self, args):
         """Parse command line arguments."""
         parser = argparse.ArgumentParser(description=f"GraXpert AI Deconvolution - Siril CLI v{VERSION}")
-        parser.add_argument("-strength", type=float, default=1.0, help="Deconvolution strength (0.0-1.0)")
-        parser.add_argument("-psfsize", type=float, default=0.3, help="Point Spread Function size")
+        parser.add_argument("-strength", type=float, default=0.5, help="Deconvolution strength (0.0-1.0)")
+        parser.add_argument("-psfsize", type=float, default=5.0, help="Point Spread Function size")
         parser.add_argument("-batch", type=int, default=4, help="Batch size for processing")
         parser.add_argument("-model", type=str, help="Model name to use (directory name in GraXpert models folder)")
 
@@ -3367,7 +3380,7 @@ class BackgroundExtractionCLI:
         """Parse command line arguments."""
         parser = argparse.ArgumentParser(description=f"GraXpert AI BG Extraction - Siril CLI v{VERSION}")
         parser.add_argument("-correction", type=str, default="subtraction", help="Correction type ('subtraction' (default) or 'division')")
-        parser.add_argument("-smoothing", type=float, default=1.0, help="Smoothing (0.0-1.0)")
+        parser.add_argument("-smoothing", type=float, default=0.5, help="Smoothing (0.0-1.0)")
         parser.add_argument("-model", type=str, help="Model name to use (directory name in GraXpert models folder)")
         parser.add_argument("-keep_bg", action="store_true", help="Keep the extracted background")
 
