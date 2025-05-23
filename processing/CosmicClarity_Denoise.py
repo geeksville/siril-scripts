@@ -15,13 +15,18 @@ import asyncio
 import subprocess
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, messagebox
 from ttkthemes import ThemedTk
 from sirilpy import tksiril
 import numpy as np
 import tiffile
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
+
+if s.check_module_version(">=0.6.0") and sys.platform.startswith("linux"):
+    import sirilpy.tkfilebrowser as filedialog
+else:
+    from tkinter import filedialog
 
 class CosmicClarityInterface:
     def __init__(self, root):

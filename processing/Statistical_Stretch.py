@@ -7,25 +7,30 @@
 import sirilpy as s
 s.ensure_installed("ttkthemes")
 
-import os
 import sys
 import argparse
-import asyncio
-import threading
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, messagebox
 from ttkthemes import ThemedTk
 from sirilpy import tksiril
 import numpy as np
 import math
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
+REQUIRES_SIRILPY = "0.6.10"
 # 1.0.1 AKB: convert "requires" to exception handling
 # 1.0.2 CR: round down slider values
 # 1.0.3 CR: fix division by zero when target_median is 0 or 1.0
+# 1.0.4 CM: Better cli/GUI handling
+
+if not s.check_module_version(f'>={REQUIRES_SIRILPY}'):
+    print(f"Please install sirilpy version {REQUIRES_SIRILPY} or higher")
+    sys.exit(1)
 
 class StatisticalStretchInterface:
-    def __init__(self, root=None, cli_args=None):
+    def __init__(self, siril: s.SirilInterface, root=None, cli_args=None):
+
+        self.cli_call = cli_args is not None
         # If no CLI args, create a default namespace with defaults
         if cli_args is None:
             parser = argparse.ArgumentParser()
@@ -47,17 +52,7 @@ class StatisticalStretchInterface:
             self.root.resizable(False, False)
             self.style = tksiril.standard_style()
 
-        # Initialize Siril connection
-        self.siril = s.SirilInterface()
-
-        try:
-            self.siril.connect()
-        except s.SirilConnectionError:
-            if root:
-                self.siril.error_messagebox("Failed to connect to Siril")
-            else:
-                print("Failed to connect to Siril")
-            return
+        self.siril = siril
 
         if not self.siril.is_image_loaded():
             if root:
@@ -75,9 +70,8 @@ class StatisticalStretchInterface:
             self.create_widgets()
             tksiril.match_theme_to_siril(self.root, self.siril)
 
-        # Only apply changes if CLI arguments are non-default
-        if cli_args and (cli_args.median != 0.2 or cli_args.boost != 0.0 or
-                         cli_args.linked or cli_args.normalize):
+        # Only apply changes if CLI call
+        if self.cli_call:
             self.apply_changes(from_cli=True)
 
     def floor_value(self, value, decimals=2):
@@ -365,26 +359,36 @@ class StatisticalStretchInterface:
             self.root.destroy()
 
 def main():
-    parser = argparse.ArgumentParser(description="Statistical Stretch for Astronomical Images")
-    parser.add_argument("-median", type=float, default=0.2,
-                        help="Target median value for stretch (0.01 to 0.99)")
-    parser.add_argument("-boost", type=float, default=0.0,
-                        help="Curves boost value (0.0 to 0.5)")
-    parser.add_argument("-linked", action="store_true",
-                        help="Use linked stretch for color images")
-    parser.add_argument("-normalize", action="store_true",
-                        help="Normalize image after stretch")
-
-    args = parser.parse_args()
 
     try:
-        if any([args.median != 0.2, args.boost != 0.0, args.linked, args.normalize]):
+        # Launch to Interface to determine if we are in CLI or GUI mode and to init connection
+        siril = s.SirilInterface()
+        try:
+            siril.connect()
+        except s.SirilConnectionError:
+            if not siril.is_cli():
+                siril.error_messagebox("Failed to connect to Siril")
+            else:
+                print("Failed to connect to Siril")
+            return
+        if siril.is_cli():
             # CLI mode
-            app = StatisticalStretchInterface(cli_args=args)
+            parser = argparse.ArgumentParser(description="Statistical Stretch for Astronomical Images")
+            parser.add_argument("-median", type=float, default=0.2,
+                                help="Target median value for stretch (0.01 to 0.99)")
+            parser.add_argument("-boost", type=float, default=0.0,
+                                help="Curves boost value (0.0 to 0.5)")
+            parser.add_argument("-linked", action="store_true",
+                                help="Use linked stretch for color images")
+            parser.add_argument("-normalize", action="store_true",
+                                help="Normalize image after stretch")
+
+            args = parser.parse_args()
+            app = StatisticalStretchInterface(siril, cli_args=args)
         else:
             # GUI mode
             root = ThemedTk()
-            app = StatisticalStretchInterface(root)
+            app = StatisticalStretchInterface(siril, root)
             root.mainloop()
     except Exception as e:
         print(f"Error initializing application: {str(e)}")

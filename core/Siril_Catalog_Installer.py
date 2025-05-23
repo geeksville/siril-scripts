@@ -11,8 +11,9 @@
 # 1.0.4 Adrian Knagg-Baugh: Improve error handling, adding retries and resume
 # 1.0.5 AKB: convert "requires" to use exception handling
 # 1.0.6 CME: remove unnecesary imports, add missing import for shutil, corrected errors enums
+# 1.0.7 CME: use new sirilpy filedialog module for Linux
 
-VERSION = "1.0.6"
+VERSION = "1.0.7"
 
 # Catalog retrieval details
 ASTRO_RECORD = 14692304
@@ -31,10 +32,15 @@ import os
 import subprocess
 import sys
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, messagebox
 import urllib.request
 import numpy as np
 import shutil
+
+if s.check_module_version(">=0.6.0") and sys.platform.startswith("linux"):
+    import sirilpy.tkfilebrowser as filedialog
+else:
+    from tkinter import filedialog
 
 s.ensure_installed("astropy", "astropy_healpix", "matplotlib", "requests", "ttkthemes")
 import astropy.units as u
