@@ -12,7 +12,7 @@ as better performance it is intended to become the primary interface
 to GraXpert in the future: if you experience issues with the legacy
 GraXpert interface it is recommended to try this script instead.
 
-Script version: 1.0.2
+Script version: 1.0.3
 (c) Adrian Knagg-Baugh 2025
 SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -32,6 +32,7 @@ Models licensed as CC-BY-NC-SA-4.0
 #       flag; make the defaults match GraXpert (except smoothing: the
 #       default GraXpert smoothing value of 0.0 seems too low so this is
 #       set at 0.5)
+# 1.0.3 Fix an error with use of the onnx_helper
 
 import os
 import re
@@ -71,7 +72,7 @@ onnx_helper.install_onnxruntime()
 
 import onnxruntime
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 DENOISE_CONFIG_FILENAME = "graxpert_denoise_model.conf"
 BGE_CONFIG_FILENAME = "graxpert_bge_model.conf"
 DECONVOLVE_STARS_CONFIG_FILENAME = "graxpert_deconv_stars_model.conf"
@@ -766,7 +767,6 @@ class DenoiserProcessing:
         self.cached_original_image = None
 
         self.config_dir = self.siril.get_siril_configdir() if self.siril else None
-        self.onnx_helper = onnx_helper
 
     def reset_cache(self):
         """Reset the cached denoised image."""
@@ -931,7 +931,7 @@ class DenoiserProcessing:
         # Initialize ONNX runtime session
         providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider'] \
                 if platform.system().lower() == "darwin" \
-                else self.onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
+                else onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
         session = onnxruntime.InferenceSession(ai_path, providers=providers)
 
         print(f"Used inference providers: {session.get_providers()}")
@@ -1924,7 +1924,7 @@ class BGEProcessing:
         # Initialize ONNX runtime session
         providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider'] \
                 if platform.system().lower() == "darwin" \
-                else self.onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
+                else onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
 
         session = onnxruntime.InferenceSession(ai_path, providers=providers)
 
