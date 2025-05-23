@@ -4,6 +4,7 @@
 
 # 1.0.0 Original release
 # 1.0.1 bugfix: fixed incorrect handling of 16 bits images
+# 1.0.2 Updates due to API changes
 
 import sirilpy as s
 from sirilpy import tksiril
@@ -41,14 +42,19 @@ import sys
 import threading
 import tkinter as tk
 import requests
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, messagebox
 import webbrowser
 
 import numpy as np
 import onnxruntime
 from ttkthemes import ThemedTk
 
-VERSION = "1.0.1"
+if s.check_module_version(">=0.6.0") and sys.platform.startswith("linux"):
+    import sirilpy.tkfilebrowser as filedialog
+else:
+    from tkinter import filedialog
+
+VERSION = "1.0.2"
 CONFIG_FILENAME = "aberration_remover_model.conf"
 
 

@@ -16,7 +16,6 @@ from ttkthemes import ThemedTk
 from sirilpy import tksiril
 import numpy as np
 from PIL import Image, ImageTk
-import astropy
 from astropy.io import fits
 
 filetypes = []
@@ -27,9 +26,10 @@ else:
     from tkinter import filedialog
     filetypes = [("FITS files", "*.fits *.fit *.fts")]
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 # 1.0.1 CR: using tkfilebrowser for linux OS
 # 1.0.2 CR: fixing script due to API changes
+# 1.0.3 CM: remove unnecessary import
 
 class NBtoRGBstarsInterface:
     def __init__(self, root):

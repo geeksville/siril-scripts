@@ -11,14 +11,14 @@
 import sirilpy as s
 s.ensure_installed("astropy", "astroquery", "GaiaXPy", "certifi", "ssl")
 import sys
-import ssl
 import argparse
 from astropy.coordinates import SkyCoord
-import astropy.utils.data
 import astropy.units as u
 import numpy as np
 from astroquery.gaia import Gaia
 import gaiaxpy
+
+VERSION = "1.0.1"
 
 def plot_spectrum(siril, from_cli, fmt):
     # Retrieve the selected star's position
@@ -93,6 +93,7 @@ def main():
     parser.add_argument("-fmt", type=str, default="xml",
                         help="output format (default = 'xml', options are 'avro', 'csv', 'ecsv', 'fits' or 'xml')")
     args = parser.parse_args()
+    print(f'Running Selected_Star_Spectrum v{VERSION}...')
 
     # Initialize Siril interface and ensure necessary packages are installed
     siril = s.SirilInterface()
@@ -108,23 +109,21 @@ def main():
 
     halfsize = int(args.size / 2)
 
-    from_cli = False
+    from_cli = siril.is_cli()
     selx = None
     sely = None
     selw = None
     selh = None
-    if (args.x > halfsize and args.y > halfsize and args.x < (width - halfsize) and \
-                args.y < (height - halfsize)):
+    if from_cli:
         selx = args.x - halfsize
         sely = args.y - halfsize
         selw = args.size
         selh = args.size
         siril.set_siril_selection(selx, sely, selw, selh)
-        from_cli = True
     else:
         selx, sely, selw, selh = siril.get_siril_selection()
 
-    if (not selw and not selh):
+    if (not selw or not selh):
         e = "Error: no selection set"
         if from_cli:
             print(f"{e}", file=sys.stderr)
