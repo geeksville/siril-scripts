@@ -931,7 +931,7 @@ class DenoiserProcessing:
 
         # Initialize ONNX runtime session
         providers = []
-        if platform().system().lower() == 'darwin':
+        if platform.system().lower() == 'darwin':
             if ai_gpu_acceleration is True:
                 providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
             else:
@@ -1393,7 +1393,7 @@ class DeconvolutionProcessing:
         output = copy.deepcopy(image)
 
         # Initialize ONNX runtime session
-        if platform().system().lower() == 'darwin':
+        if platform.system().lower() == 'darwin':
             if ai_gpu_acceleration is True:
                 providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
             else:
@@ -1934,7 +1934,7 @@ class BGEProcessing:
 
         # Initialize ONNX runtime session
         providers = []
-        if platform().system().lower() == 'darwin':
+        if platform.system().lower() == 'darwin':
             if ai_gpu_acceleration is True:
                 providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
             else:
