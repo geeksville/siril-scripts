@@ -12,7 +12,7 @@ as better performance it is intended to become the primary interface
 to GraXpert in the future: if you experience issues with the legacy
 GraXpert interface it is recommended to try this script instead.
 
-Script version: 1.0.3
+Script version: 1.0.4
 (c) Adrian Knagg-Baugh 2025
 SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -33,6 +33,7 @@ Models licensed as CC-BY-NC-SA-4.0
 #       default GraXpert smoothing value of 0.0 seems too low so this is
 #       set at 0.5)
 # 1.0.3 Fix an error with use of the onnx_helper
+# 1.0.4 Fix GPU checkbox on MacOS
 
 import os
 import re
@@ -72,7 +73,7 @@ onnx_helper.install_onnxruntime()
 
 import onnxruntime
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 DENOISE_CONFIG_FILENAME = "graxpert_denoise_model.conf"
 BGE_CONFIG_FILENAME = "graxpert_bge_model.conf"
 DECONVOLVE_STARS_CONFIG_FILENAME = "graxpert_deconv_stars_model.conf"
@@ -929,9 +930,14 @@ class DenoiserProcessing:
         print(f"Available inference providers: {onnxruntime.get_available_providers()}")
 
         # Initialize ONNX runtime session
-        providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider'] \
-                if platform.system().lower() == "darwin" \
-                else onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
+        providers = []
+        if platform().system().lower() == 'darwin':
+            if ai_gpu_acceleration is True:
+                providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
+            else:
+                providers = ['CPUExecutionProvider']
+        else providers = onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
+
         session = onnxruntime.InferenceSession(ai_path, providers=providers)
 
         print(f"Used inference providers: {session.get_providers()}")
@@ -1386,9 +1392,12 @@ class DeconvolutionProcessing:
         output = copy.deepcopy(image)
 
         # Initialize ONNX runtime session
-        providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider'] \
-                if platform.system().lower() == "darwin" \
-                else onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
+        if platform().system().lower() == 'darwin':
+            if ai_gpu_acceleration is True:
+                providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
+            else:
+                providers = ['CPUExecutionProvider']
+        else onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
 
         session = onnxruntime.InferenceSession(ai_path, providers=providers)
 
@@ -1922,9 +1931,13 @@ class BGEProcessing:
             progress_callback("Initializing ONNX runtime...", 0.25)
 
         # Initialize ONNX runtime session
-        providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider'] \
-                if platform.system().lower() == "darwin" \
-                else onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
+        providers = []
+        if platform().system().lower() == 'darwin':
+            if ai_gpu_acceleration is True:
+                providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
+            else:
+                providers = ['CPUExecutionProvider']
+        else providers = onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
 
         session = onnxruntime.InferenceSession(ai_path, providers=providers)
 
