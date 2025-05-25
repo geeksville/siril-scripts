@@ -12,7 +12,6 @@ as better performance it is intended to become the primary interface
 to GraXpert in the future: if you experience issues with the legacy
 GraXpert interface it is recommended to try this script instead.
 
-Script version: 1.0.4
 (c) Adrian Knagg-Baugh 2025
 SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -34,6 +33,7 @@ Models licensed as CC-BY-NC-SA-4.0
 #       set at 0.5)
 # 1.0.3 Fix an error with use of the onnx_helper
 # 1.0.4 Fix GPU checkbox on MacOS
+# 1.0.5 Fallback to CPU is more robust
 
 import os
 import re
@@ -73,7 +73,7 @@ onnx_helper.install_onnxruntime()
 
 import onnxruntime
 
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 DENOISE_CONFIG_FILENAME = "graxpert_denoise_model.conf"
 BGE_CONFIG_FILENAME = "graxpert_bge_model.conf"
 DECONVOLVE_STARS_CONFIG_FILENAME = "graxpert_deconv_stars_model.conf"
