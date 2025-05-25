@@ -936,7 +936,8 @@ class DenoiserProcessing:
                 providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
             else:
                 providers = ['CPUExecutionProvider']
-        else providers = onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
+        else:
+            providers = onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
 
         session = onnxruntime.InferenceSession(ai_path, providers=providers)
 
@@ -1397,7 +1398,8 @@ class DeconvolutionProcessing:
                 providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
             else:
                 providers = ['CPUExecutionProvider']
-        else onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
+        else:
+            onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
 
         session = onnxruntime.InferenceSession(ai_path, providers=providers)
 
@@ -1937,7 +1939,8 @@ class BGEProcessing:
                 providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
             else:
                 providers = ['CPUExecutionProvider']
-        else providers = onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
+        else:
+            providers = onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
 
         session = onnxruntime.InferenceSession(ai_path, providers=providers)
 
