@@ -872,10 +872,11 @@ class DenoiserProcessing:
         print("Starting denoising")
 
         # Handle planar format (c, h, w) -> (h, w, c)
-        planar_format = False
         if image.shape[0] < image.shape[1] and image.shape[0] <= 4:
             image = np.transpose(image, (1, 2, 0))
             planar_format = True
+        else:
+            planar_format = False
 
         # Sanitize batch size
         if batch_size < 1:
@@ -938,9 +939,9 @@ class DenoiserProcessing:
         else:
             providers = onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
 
-        print(f"Using inference providers: {session.get_providers()}")
-
         session = onnxruntime.InferenceSession(ai_path, providers=providers)
+
+        print(f"Used inference providers: {session.get_providers()}")
 
         # Process image in batches
         cancel_flag = False
@@ -954,7 +955,6 @@ class DenoiserProcessing:
             input_tiles = []
             input_tile_copies = []
             for t_idx in range(0, batch_size):
-
                 index = b + t_idx
                 i = index % ith
                 j = index // ith
@@ -982,14 +982,12 @@ class DenoiserProcessing:
 
             try:
                 session_result = session.run(None, {"gen_input_image": input_tiles})[0]
-            except (ONNXRuntimeError,
-                    onnxruntime.capi.onnxruntime_pybind11_state.RuntimeException) as err:
+            except onnxruntime.capi.onnxruntime_pybind11_state.RuntimeException as err:
                 error_message = str(err)
-                print("Error: falling back to CPU.")
-                if "cudaErrorNoKernelImageForDevice" in error_message \
-                    or "Error compiling model" in error_message:
+                if "cudaErrorNoKernelImageForDevice" in error_message:
                     print("ONNX cannot build an inferencing kernel for this GPU.")
-                # Retry with CPU only
+                    # Retry with CPU only
+                print("Falling back to CPU.")
                 providers = ['CPUExecutionProvider']
                 session = onnxruntime.InferenceSession(ai_path, providers=providers)
                 session_result = session.run(None, {"gen_input_image": input_tiles})[0]
@@ -1463,14 +1461,12 @@ class DeconvolutionProcessing:
             if deconv_type == "Obj" and "1.0.0" in ai_path:
                 try:
                     session_result = session.run(None, {"gen_input_image": input_tiles, "sigma": sigma, "strenght": strenght_p})[0]
-                except (ONNXRuntimeError,
-                        onnxruntime.capi.onnxruntime_pybind11_state.RuntimeException) as err:
+                except onnxruntime.capi.onnxruntime_pybind11_state.RuntimeException as err:
                     error_message = str(err)
-                    print("Error: falling back to CPU.")
-                    error_patterns = ("cudaErrorNoKernelImageForDevice",
-                                      "Error compiling model")
-                    if any(pattern in error_message for pattern in error_patterns):
+                    if "cudaErrorNoKernelImageForDevice" in error_message:
                         print("ONNX cannot build an inferencing kernel for this GPU.")
+                    # Retry with CPU only
+                    print("Falling back to GPU")
                     # Retry with CPU only
                     providers = ['CPUExecutionProvider']
                     session = onnxruntime.InferenceSession(ai_path, providers=providers)
@@ -1478,18 +1474,17 @@ class DeconvolutionProcessing:
             else:
                 try:
                     session_result = session.run(None, {"gen_input_image": input_tiles, "params": conds})[0]
-                except (ONNXRuntimeError,
-                        onnxruntime.capi.onnxruntime_pybind11_state.RuntimeException) as err:
+                except onnxruntime.capi.onnxruntime_pybind11_state.RuntimeException as err:
                     error_message = str(err)
-                    print("Error: falling back to CPU.")
-                    error_patterns = ("cudaErrorNoKernelImageForDevice",
-                                      "Error compiling model")
-                    if any(pattern in error_message for pattern in error_patterns):
-                        print("ONNX cannot build an inferencing kernel for this GPU.")
-                    # Retry with CPU only
-                    providers = ['CPUExecutionProvider']
-                    session = onnxruntime.InferenceSession(ai_path, providers=providers)
-                    session_result = session.run(None, {"gen_input_image": input_tiles, "sigma": sigma, "strenght": strenght_p})[0]
+                    if "cudaErrorNoKernelImageForDevice" in error_message:
+                        print("ONNX cannot build an inferencing kernel for this GPU. Falling back to CPU.")
+                        # Retry with CPU only
+                        providers = ['CPUExecutionProvider']
+                        session = onnxruntime.InferenceSession(ai_path, providers=providers)
+                        session_result = session.run(None, {"gen_input_image": input_tiles, "sigma": sigma, "strenght": strenght_p})[0]
+                    else:
+                        # Re-raise if it's a different error
+                        raise
 
             for e in session_result:
                 output_tiles.append(e)
@@ -1957,15 +1952,12 @@ class BGEProcessing:
         # Run inference
         try:
             background = session.run(None, {"gen_input_image": np.expand_dims(imarray_shrink, axis=0)})[0][0]
-        except (ONNXRuntimeError,
-                onnxruntime.capi.onnxruntime_pybind11_state.RuntimeException) as err:
+        except onnxruntime.capi.onnxruntime_pybind11_state.RuntimeException as err:
             error_message = str(err)
-            print("Error: falling back to CPU.")
-            error_patterns = ("cudaErrorNoKernelImageForDevice",
-                              "Error compiling model")
-            if any(pattern in error_message for pattern in error_patterns):
+            if "cudaErrorNoKernelImageForDevice" in error_message:
                 print("ONNX cannot build an inferencing kernel for this GPU.")
             # Retry with CPU only
+            print("Falling back to GPU")
             providers = ['CPUExecutionProvider']
             session = onnxruntime.InferenceSession(ai_path, providers=providers)
             background = session.run(None, {"gen_input_image": np.expand_dims(imarray_shrink, axis=0)})[0][0]
