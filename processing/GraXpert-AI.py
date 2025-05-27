@@ -34,6 +34,9 @@ Models licensed as CC-BY-NC-SA-4.0
 #       set at 0.5)
 # 1.0.3 Fix an error with use of the onnx_helper
 # 1.0.4 Fix GPU checkbox on MacOS
+# 1.0.5 Fallback to CPU is more robust
+# 1.0.6 Fix a bug relating to printing the used inference providers
+# 1.0.7 More bugfixes
 
 import os
 import re
@@ -73,7 +76,7 @@ onnx_helper.install_onnxruntime()
 
 import onnxruntime
 
-VERSION = "1.0.4"
+VERSION = "1.0.7"
 DENOISE_CONFIG_FILENAME = "graxpert_denoise_model.conf"
 BGE_CONFIG_FILENAME = "graxpert_bge_model.conf"
 DECONVOLVE_STARS_CONFIG_FILENAME = "graxpert_deconv_stars_model.conf"
@@ -939,7 +942,23 @@ class DenoiserProcessing:
         else:
             providers = onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
 
-        session = onnxruntime.InferenceSession(ai_path, providers=providers)
+        try:
+            session = onnxruntime.InferenceSession(ai_path, providers=providers)
+        except Exception as err:
+            error_message = str(err)
+            print("Warning: falling back to CPU.")
+            if "cudaErrorNoKernelImageForDevice" in error_message \
+                or "Error compiling model" in error_message:
+                print("ONNX cannot build an inferencing kernel for this GPU.")
+            # Retry with CPU only
+            providers = ['CPUExecutionProvider']
+            try:
+                session = onnxruntime.InferenceSession(ai_path, providers=providers)
+            except ONNXRuntimeError as err:
+                messagebox.showerror("Error", "Cannot build an inference model on this device")
+                return
+
+        print(f"Using inference providers: {session.get_providers()}")
 
         print(f"Used inference providers: {session.get_providers()}")
 
@@ -982,12 +1001,9 @@ class DenoiserProcessing:
 
             try:
                 session_result = session.run(None, {"gen_input_image": input_tiles})[0]
-            except onnxruntime.capi.onnxruntime_pybind11_state.RuntimeException as err:
+            except Exception as err:
                 error_message = str(err)
-                if "cudaErrorNoKernelImageForDevice" in error_message:
-                    print("ONNX cannot build an inferencing kernel for this GPU.")
-                    # Retry with CPU only
-                print("Falling back to CPU.")
+                print("Warning: falling back to CPU.")
                 providers = ['CPUExecutionProvider']
                 session = onnxruntime.InferenceSession(ai_path, providers=providers)
                 session_result = session.run(None, {"gen_input_image": input_tiles})[0]
@@ -1393,18 +1409,33 @@ class DeconvolutionProcessing:
         output = copy.deepcopy(image)
 
         # Initialize ONNX runtime session
+        providers = []
         if platform.system().lower() == 'darwin':
             if ai_gpu_acceleration is True:
                 providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
             else:
                 providers = ['CPUExecutionProvider']
         else:
-            onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
+            providers = onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
 
-        session = onnxruntime.InferenceSession(ai_path, providers=providers)
+        try:
+            session = onnxruntime.InferenceSession(ai_path, providers=providers)
+        except Exception as err:
+            error_message = str(err)
+            print("Warning: falling back to CPU.")
+            if "cudaErrorNoKernelImageForDevice" in error_message \
+                or "Error compiling model" in error_message:
+                print("ONNX cannot build an inferencing kernel for this GPU.")
+            # Retry with CPU only
+            providers = ['CPUExecutionProvider']
+            try:
+                session = onnxruntime.InferenceSession(ai_path, providers=providers)
+            except ONNXRuntimeError as err:
+                messagebox.showerror("Error", "Cannot build an inference model on this device")
+                return
 
         print(f"Available inference providers: {onnxruntime.get_available_providers()}")
-        print(f"Used inference providers: {session.get_providers()}")
+        print(f"Using inference providers: {session.get_providers()}")
 
         # Process image in batches
         cancel_flag = False
@@ -1461,9 +1492,12 @@ class DeconvolutionProcessing:
             if deconv_type == "Obj" and "1.0.0" in ai_path:
                 try:
                     session_result = session.run(None, {"gen_input_image": input_tiles, "sigma": sigma, "strenght": strenght_p})[0]
-                except onnxruntime.capi.onnxruntime_pybind11_state.RuntimeException as err:
+                except Exception as err:
                     error_message = str(err)
-                    if "cudaErrorNoKernelImageForDevice" in error_message:
+                    print("Warning: falling back to CPU.")
+                    error_patterns = ("cudaErrorNoKernelImageForDevice",
+                                      "Error compiling model")
+                    if any(pattern in error_message for pattern in error_patterns):
                         print("ONNX cannot build an inferencing kernel for this GPU.")
                     # Retry with CPU only
                     print("Falling back to GPU")
@@ -1474,17 +1508,17 @@ class DeconvolutionProcessing:
             else:
                 try:
                     session_result = session.run(None, {"gen_input_image": input_tiles, "params": conds})[0]
-                except onnxruntime.capi.onnxruntime_pybind11_state.RuntimeException as err:
+                except Exception as err:
                     error_message = str(err)
-                    if "cudaErrorNoKernelImageForDevice" in error_message:
-                        print("ONNX cannot build an inferencing kernel for this GPU. Falling back to CPU.")
-                        # Retry with CPU only
-                        providers = ['CPUExecutionProvider']
-                        session = onnxruntime.InferenceSession(ai_path, providers=providers)
-                        session_result = session.run(None, {"gen_input_image": input_tiles, "sigma": sigma, "strenght": strenght_p})[0]
-                    else:
-                        # Re-raise if it's a different error
-                        raise
+                    print("Warning: falling back to CPU.")
+                    error_patterns = ("cudaErrorNoKernelImageForDevice",
+                                      "Error compiling model")
+                    if any(pattern in error_message for pattern in error_patterns):
+                        print("ONNX cannot build an inferencing kernel for this GPU.")
+                    # Retry with CPU only
+                    providers = ['CPUExecutionProvider']
+                    session = onnxruntime.InferenceSession(ai_path, providers=providers)
+                    session_result = session.run(None, {"gen_input_image": input_tiles, "sigma": sigma, "strenght": strenght_p})[0]
 
             for e in session_result:
                 output_tiles.append(e)
@@ -1942,9 +1976,23 @@ class BGEProcessing:
         else:
             providers = onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
 
-        session = onnxruntime.InferenceSession(ai_path, providers=providers)
+        try:
+            session = onnxruntime.InferenceSession(ai_path, providers=providers)
+        except Exception as err:
+            error_message = str(err)
+            print("Warning: falling back to CPU.")
+            if "cudaErrorNoKernelImageForDevice" in error_message \
+                or "Error compiling model" in error_message:
+                print("ONNX cannot build an inferencing kernel for this GPU.")
+            # Retry with CPU only
+            providers = ['CPUExecutionProvider']
+            try:
+                session = onnxruntime.InferenceSession(ai_path, providers=providers)
+            except ONNXRuntimeError as err:
+                messagebox.showerror("Error", "Cannot build an inference model on this device")
+                return
 
-        print(f"Used inference providers: {session.get_providers()}")
+        print(f"Using inference providers: {session.get_providers()}")
 
         if progress_callback:
             progress_callback("Running inference...", 0.4)
@@ -1954,7 +2002,10 @@ class BGEProcessing:
             background = session.run(None, {"gen_input_image": np.expand_dims(imarray_shrink, axis=0)})[0][0]
         except onnxruntime.capi.onnxruntime_pybind11_state.RuntimeException as err:
             error_message = str(err)
-            if "cudaErrorNoKernelImageForDevice" in error_message:
+            print("Warning: falling back to CPU.")
+            error_patterns = ("cudaErrorNoKernelImageForDevice",
+                              "Error compiling model")
+            if any(pattern in error_message for pattern in error_patterns):
                 print("ONNX cannot build an inferencing kernel for this GPU.")
             # Retry with CPU only
             print("Falling back to GPU")
@@ -2821,64 +2872,7 @@ class GUIInterface:
             messagebox.showerror("Error", "Please select a valid ONNX model file.")
             return
 
-        if self.siril.is_sequence_loaded():
-            if operation == "bge":
-                correction_type = self.correction_type.get()
-                smoothing = float(self.smoothing_var.get())
-                # Get current sequence name
-                sequence_name = self.siril.get_seq().seqname
-                keep_bg = self.keep_bg_var.get()
-
-                # Start sequence processing thread using processor's method
-                threading.Thread(
-                    target=self.processor.process_sequence,
-                    args=(sequence_name, model_path, correction_type, smoothing,
-                        keep_bg, gpu_acceleration, self._update_progress),
-                    daemon=True
-                ).start()
-            elif operation == "denoise":
-                strength = float(self.strength_var.get())
-                # Get current sequence name
-                sequence_name = self.siril.get_seq().seqname
-
-                # Start sequence processing thread using processor's method
-                threading.Thread(
-                    target=self.processor.process_sequence,
-                    args=(sequence_name, model_path, strength, batch_size,
-                        gpu_acceleration, self._update_progress),
-                    daemon=True
-                ).start()
-            elif operation == "deconvolution-stars":
-                strength = float(self.strength_var.get())
-                psf_size = float(self.psf_size_var.get())
-                sequence_name = self.siril.get_seq().seqname
-
-                # Placeholder for deconvolution-stars sequence processing
-                self._update_progress(f"Processing {sequence_name} with stars deconvolution (PSF size: {psf_size:.2f}, strength: {strength:.2f})")
-                threading.Thread(
-                    target=self.processor.process_sequence,
-                    args=(sequence_name, model_path, strength, psf_size, batch_size,
-                        gpu_acceleration, self._update_progress),
-                    daemon=True
-                ).start()
-
-            elif operation == "deconvolution-object":
-                strength = float(self.strength_var.get())
-                psf_size = float(self.psf_size_var.get())
-                sequence_name = self.siril.get_seq().seqname
-
-                self._update_progress(f"Processing {sequence_name} with object deconvolution (PSF size: {psf_size:.2f}, strength: {strength:.2f})")
-                threading.Thread(
-                    target=self.processor.process_sequence,
-                    args=(sequence_name, model_path, strength, psf_size, batch_size,
-                        gpu_acceleration, self._update_progress),
-                    daemon=True
-                ).start()
-
-            else:
-                print("Operation not handled")
-
-        elif self.siril.is_image_loaded():
+        if self.siril.is_image_loaded():
             if operation == "bge":
                 correction_type = self.correction_type.get()
                 smoothing = float(self.smoothing_var.get())
@@ -2977,6 +2971,63 @@ class GUIInterface:
                           gpu_acceleration, self._update_progress),
                     daemon=True
                 ).start()
+        elif self.siril.is_sequence_loaded():
+            if operation == "bge":
+                correction_type = self.correction_type.get()
+                smoothing = float(self.smoothing_var.get())
+                # Get current sequence name
+                sequence_name = self.siril.get_seq().seqname
+                keep_bg = self.keep_bg_var.get()
+
+                # Start sequence processing thread using processor's method
+                threading.Thread(
+                    target=self.processor.process_sequence,
+                    args=(sequence_name, model_path, correction_type, smoothing,
+                        keep_bg, gpu_acceleration, self._update_progress),
+                    daemon=True
+                ).start()
+            elif operation == "denoise":
+                strength = float(self.strength_var.get())
+                # Get current sequence name
+                sequence_name = self.siril.get_seq().seqname
+
+                # Start sequence processing thread using processor's method
+                threading.Thread(
+                    target=self.processor.process_sequence,
+                    args=(sequence_name, model_path, strength, batch_size,
+                        gpu_acceleration, self._update_progress),
+                    daemon=True
+                ).start()
+            elif operation == "deconvolution-stars":
+                strength = float(self.strength_var.get())
+                psf_size = float(self.psf_size_var.get())
+                sequence_name = self.siril.get_seq().seqname
+
+                # Placeholder for deconvolution-stars sequence processing
+                self._update_progress(f"Processing {sequence_name} with stars deconvolution (PSF size: {psf_size:.2f}, strength: {strength:.2f})")
+                threading.Thread(
+                    target=self.processor.process_sequence,
+                    args=(sequence_name, model_path, strength, psf_size, batch_size,
+                        gpu_acceleration, self._update_progress),
+                    daemon=True
+                ).start()
+
+            elif operation == "deconvolution-object":
+                strength = float(self.strength_var.get())
+                psf_size = float(self.psf_size_var.get())
+                sequence_name = self.siril.get_seq().seqname
+
+                self._update_progress(f"Processing {sequence_name} with object deconvolution (PSF size: {psf_size:.2f}, strength: {strength:.2f})")
+                threading.Thread(
+                    target=self.processor.process_sequence,
+                    args=(sequence_name, model_path, strength, psf_size, batch_size,
+                        gpu_acceleration, self._update_progress),
+                    daemon=True
+                ).start()
+
+            else:
+                print("Operation not handled")
+
         else:
             messagebox.showerror("Error", "No sequence or image is loaded.")
 
@@ -3033,10 +3084,10 @@ class DenoiserCLI:
             return
 
         # Start processing
-        if seq_loaded:
-            self.process_sequence()
-        else:
+        if image_loaded:
             self.process_image()
+        else:
+            self.process_sequence()
 
     def parse_arguments(self, args):
         """Parse command line arguments."""
@@ -3217,10 +3268,10 @@ class DeconvolutionCLI:
             return
 
         # Start processing
-        if seq_loaded:
-            self.process_sequence()
-        else:
+        if image_loaded:
             self.process_image()
+        else:
+            self.process_sequence()
 
     def parse_arguments(self, args):
         """Parse command line arguments."""
@@ -3387,10 +3438,10 @@ class BackgroundExtractionCLI:
             return
 
         # Start processing
-        if seq_loaded:
-            self.process_sequence()
-        else:
+        if image_loaded:
             self.process_image()
+        else:
+            self.process_sequence()
 
     def parse_arguments(self, args):
         """Parse command line arguments."""
