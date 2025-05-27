@@ -12,7 +12,6 @@ as better performance it is intended to become the primary interface
 to GraXpert in the future: if you experience issues with the legacy
 GraXpert interface it is recommended to try this script instead.
 
-Script version: 1.0.4
 (c) Adrian Knagg-Baugh 2025
 SPDX-License-Identifier: GPL-3.0-or-later
 
