@@ -2339,10 +2339,10 @@ class GUIInterface:
             self._on_operation_selected(None)  # Initialize the correct processor
 
         # Set progress label
-        if seq_loaded:
-            self._update_progress("Sequence loaded: will process selected frames of the sequence")
-        else:
+        if image_loaded:
             self._update_progress("Single image loaded: will process this image only")
+        else:
+            self._update_progress("Sequence loaded: will process selected frames of the sequence")
 
     def create_widgets(self):
         """ Create Tk widgets to provide the script GUI"""
