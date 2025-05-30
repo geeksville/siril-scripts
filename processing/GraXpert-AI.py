@@ -36,6 +36,7 @@ Models licensed as CC-BY-NC-SA-4.0
 # 1.0.5 Fallback to CPU is more robust
 # 1.0.6 Fix a bug relating to printing the used inference providers
 # 1.0.7 More bugfixes
+# 1.0.8 Fix interpretation of a TkBool variable as an integer
 
 import os
 import re
@@ -75,7 +76,7 @@ onnx_helper.install_onnxruntime()
 
 import onnxruntime
 
-VERSION = "1.0.7"
+VERSION = "1.0.8"
 DENOISE_CONFIG_FILENAME = "graxpert_denoise_model.conf"
 BGE_CONFIG_FILENAME = "graxpert_bge_model.conf"
 DECONVOLVE_STARS_CONFIG_FILENAME = "graxpert_deconv_stars_model.conf"
@@ -2864,7 +2865,7 @@ class GUIInterface:
 
         # Get processing parameters from UI
         batch_size = int(self.batch_size_var.get())
-        gpu_acceleration = self.gpu_acceleration_var.get() == 1
+        gpu_acceleration = self.gpu_acceleration_var.get()
 
         # Validate model path if needed for new processing
         if not model_path or not os.path.isfile(model_path):
