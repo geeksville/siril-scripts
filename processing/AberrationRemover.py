@@ -1,41 +1,19 @@
 # Aberration Remover AI by Riccardo Alberghi
-# Script version: 1.0.1
+# Script version: 1.0.3
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # 1.0.0 Original release
 # 1.0.1 bugfix: fixed incorrect handling of 16 bits images
 # 1.0.2 Updates due to API changes
+# 1.0.3 Implemented ONNXHelper
 
 import sirilpy as s
 from sirilpy import tksiril
 
 s.ensure_installed("ttkthemes", "numpy", "requests", "subprocess", "platform")
 
-import platform
-
-# Determine the correct onnxruntime package based on OS and hardware
-def detect_nvidia_gpu():
-    # Try to detect NVIDIA GPU by checking for nvidia-smi
-    try:
-        import subprocess
-        result = subprocess.run(["nvidia-smi"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return result.returncode == 0
-    except Exception:
-        return False
-
-onnxruntime_pkg = "onnxruntime"
-system = platform.system().lower()
-
-if system == "windows":
-    if detect_nvidia_gpu():
-        onnxruntime_pkg = "onnxruntime-gpu"
-    else:
-        onnxruntime_pkg = "onnxruntime-directml"
-elif system == "linux":
-    if detect_nvidia_gpu():
-        onnxruntime_pkg = "onnxruntime-gpu"
-
-s.ensure_installed(onnxruntime_pkg)
+onnx_helper = s.ONNXHelper()
+onnx_helper.install_onnxruntime()
 
 import os
 import sys
@@ -44,7 +22,7 @@ import tkinter as tk
 import requests
 from tkinter import ttk, messagebox
 import webbrowser
-
+import platform
 import numpy as np
 import onnxruntime
 from ttkthemes import ThemedTk
@@ -54,7 +32,9 @@ if s.check_module_version(">=0.6.0") and sys.platform.startswith("linux"):
 else:
     from tkinter import filedialog
 
-VERSION = "1.0.2"
+onnxruntime.set_default_logger_severity(3)
+
+VERSION = "1.0.3"
 CONFIG_FILENAME = "aberration_remover_model.conf"
 
 
@@ -268,7 +248,30 @@ class DeconvolutionAIInterface:
             with self.siril.image_lock():
                 self._update_progress("Loading ONNX model...")
                 model_path = self.model_path_var.get()
-                session = onnxruntime.InferenceSession(model_path)
+
+                providers = []
+                if platform.system().lower() == 'darwin':
+                    providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
+                else:
+                    providers = onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
+                
+                print(f"Used providers: {providers}")
+
+                try:
+                    session = onnxruntime.InferenceSession(model_path, providers=providers)
+                except Exception as err:
+                    error_message = str(err)
+                    print("Warning: falling back to CPU.")
+                    if "cudaErrorNoKernelImageForDevice" in error_message \
+                        or "Error compiling model" in error_message:
+                        print("ONNX cannot build an inferencing kernel for this GPU.")
+                    # Retry with CPU only
+                    providers = ['CPUExecutionProvider']
+                    try:
+                        session = onnxruntime.InferenceSession(model_path, providers=providers)
+                    except RuntimeError as err:
+                        messagebox.showerror("Error", "Cannot build an inference model on this device")
+                        return
 
                 self._update_progress("Fetching image data...")
                 # Get the currently loaded image as a NumPy array.
@@ -305,7 +308,6 @@ class DeconvolutionAIInterface:
                 # Define patch parameters.
                 patch_size = 512
                 overlap = 64
-                stride = patch_size - overlap
 
                 # Create a 2D Hann window for smooth blending
                 hann1d = np.hanning(patch_size)
