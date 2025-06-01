@@ -934,8 +934,6 @@ class DenoiserProcessing:
 
         output = copy.deepcopy(image)
 
-        print(f"Available inference providers: {onnxruntime.get_available_providers()}")
-
         # Initialize ONNX runtime session
         with s.SuppressedStderr():
             providers = onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
@@ -956,8 +954,6 @@ class DenoiserProcessing:
                     return
 
         print(f"Using inference providers: {session.get_providers()}")
-
-        print(f"Used inference providers: {session.get_providers()}")
 
         # Process image in batches
         cancel_flag = False
@@ -1418,7 +1414,6 @@ class DeconvolutionProcessing:
                     messagebox.showerror("Error", "Cannot build an inference model on this device")
                     return
 
-        print(f"Available inference providers: {onnxruntime.get_available_providers()}")
         print(f"Using inference providers: {session.get_providers()}")
 
         # Process image in batches
