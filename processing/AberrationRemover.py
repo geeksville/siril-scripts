@@ -253,7 +253,7 @@ class DeconvolutionAIInterface:
                 if platform.system().lower() == 'darwin':
                     providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
                 else:
-                    providers = onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
+                    providers = onnx_helper.get_execution_providers_ordered(True)
                 
                 print(f"Used providers: {providers}")
 
