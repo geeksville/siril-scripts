@@ -1,11 +1,12 @@
 # Aberration Remover AI by Riccardo Alberghi
-# Script version: 1.0.3
+# Script version: 1.0.4
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # 1.0.0 Original release
 # 1.0.1 bugfix: fixed incorrect handling of 16 bits images
 # 1.0.2 Updates due to API changes
 # 1.0.3 Implemented ONNXHelper
+# 1.0.4 Fixed a copy/paste bug I overlooked when reviewing (AKB)
 
 import sirilpy as s
 from sirilpy import tksiril
@@ -34,7 +35,7 @@ else:
 
 onnxruntime.set_default_logger_severity(3)
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 CONFIG_FILENAME = "aberration_remover_model.conf"
 
 
