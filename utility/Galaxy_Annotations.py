@@ -12,6 +12,7 @@ and a thumbnail table of the found galaxies.
 
 # Version History
 # 1.0.0 Initial release
+# 1.0.1 Fix saving result images when output name contains dots
 
 # Core module imports
 import os
@@ -52,7 +53,7 @@ from astropy.wcs import WCS
 from astroquery.simbad import Simbad
 import pandas as pd
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 CONFIG_FILENAME = "Galaxy_Annotations.conf"
 
 def annotate_fit(siril, fit, catalogs, output, title, logo_path, overlay_alpha):
@@ -403,6 +404,13 @@ def get_output_filename(output_basename, suffix=''):
     filename, extension = os.path.splitext(output_basename)
     if extension == '':
         extension = '.png'
+    else:
+        # is extension a supported output formats for matplotlib savefig?
+        if not extension.lower() in (".eps", ".jpeg", ".jpg", ".pdf", ".pgf", 
+                                     ".png", ".ps", ".raw", ".rgba", ".svg", 
+                                     ".svgz", ".tif", ".tiff", ".webp"):
+            extension = '.png'
+            filename = output_basename
     return f"{filename}{suffix}{extension}"
     
 def get_overlay_filename(output_basename):
