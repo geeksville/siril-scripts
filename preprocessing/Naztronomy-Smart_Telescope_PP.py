@@ -33,10 +33,12 @@ from ttkthemes import ThemedTk
 from astropy.io import fits
 import numpy as np
 
-if sys.platform.startswith("linux"):
-    import sirilpy.tkfilebrowser as filedialog
-else:
-    from tkinter import filedialog
+# Uncomment this once beta3 is released
+#if sys.platform.startswith("linux"):
+#    import sirilpy.tkfilebrowser as filedialog
+#else:
+#    from tkinter import filedialog
+from tkinter import filedialog
 
 APP_NAME = "Naztronomy - Smart Telescope Preprocessing"
 VERSION = "1.0.0"
