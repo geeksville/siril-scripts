@@ -13,6 +13,7 @@ and a thumbnail table of the found galaxies.
 # Version History
 # 1.0.0 Initial release
 # 1.0.1 Fix saving result images when output name contains dots
+# 1.0.2 Added option to select circle or box annotation overlays
 
 # Core module imports
 import os
@@ -53,10 +54,10 @@ from astropy.wcs import WCS
 from astroquery.simbad import Simbad
 import pandas as pd
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 CONFIG_FILENAME = "Galaxy_Annotations.conf"
 
-def annotate_fit(siril, fit, catalogs, output, title, logo_path, overlay_alpha):
+def annotate_fit(siril, fit, catalogs, output, title, logo_path, overlay_alpha, overlay_type):
     """
     The main processing function for creating the annotation images.
     Returns the number of found and annotated objects.
@@ -228,6 +229,7 @@ def annotate_fit(siril, fit, catalogs, output, title, logo_path, overlay_alpha):
 
         if angular_size == 0:
             patch_size = min_patch_size
+            patch_diameter_pix = min_patch_size
         else:
             # angular size is the major axis diameter in arcmin
             patch_diameter_deg = angular_size / 60.0
@@ -264,6 +266,7 @@ def annotate_fit(siril, fit, catalogs, output, title, logo_path, overlay_alpha):
             # are small...
             if not math.isnan(row.galdim_majaxis) and row.galdim_majaxis > 1.8:
                 patch_size = min_patch_size
+                patch_diameter_pix = min_patch_size
                 print(f"Unlikely large LEDA galaxy {row.main_id}: {row.galdim_majaxis} -> patch size {patch_size}")
 
         annotation_text = str(i + 1)
@@ -280,9 +283,9 @@ def annotate_fit(siril, fit, catalogs, output, title, logo_path, overlay_alpha):
         x2 = row.px + clipped // 2
         y1 = H-row.py - clipped // 2
         y2 = H-row.py + clipped // 2
-
-        annotatation_rectangles = False
-        if annotatation_rectangles:
+        
+        if overlay_type == "boxes":
+            # annotation rectangle
             rect = Rectangle((x1, y1), x2-x1, y2-y1, 
                 alpha=overlay_alpha, linewidth=1, edgecolor=color, facecolor='none')
             ax1.add_patch(rect)
@@ -305,7 +308,6 @@ def annotate_fit(siril, fit, catalogs, output, title, logo_path, overlay_alpha):
                 
         ax1.text(row.px, text_y, annotation_text, 
             ha='center', va=v_align, color=color, alpha=overlay_alpha, fontsize=fontsize)
-            
         
         patch = img[y1:y2, x1:x2]
         all_patches.append(patch)
@@ -447,6 +449,7 @@ class AnnotationsScriptInterface:
             parser.add_argument("-title", type=str, default=None)
             parser.add_argument("-logo_path", type=str, default="")
             parser.add_argument("-overlay_alpha", type=float, default=0.6)
+            parser.add_argument("-overlay_type", type=str, default="circles")
             cli_args = parser.parse_args([])
 
         self.cli_args = cli_args
@@ -521,9 +524,10 @@ class AnnotationsScriptInterface:
         # Initialization to do in GUI mode...
         if root:
             # load options from config file
-            logo_path, overlay_alpha, selected_catalogs = self.load_config_file()
+            logo_path, overlay_alpha, overlay_type, selected_catalogs = self.load_config_file()
             self.cli_args.logo_path = logo_path
             self.cli_args.overlay_alpha = overlay_alpha
+            self.cli_args.overlay_type = overlay_type
             # Create the UI and match its theme to Siril
             self.create_widgets()
             tksiril.match_theme_to_siril(self.root, self.siril)
@@ -546,7 +550,7 @@ class AnnotationsScriptInterface:
         if filename:
             self.logo_path.set(filename)
             # update config file
-            self.save_config_file(filename, self.overlay_alpha_var.get(), None)
+            self.save_config_file(filename, self.overlay_alpha_var.get(), self.overlay_type_var.get(), None)
 
 
     def create_widgets(self):
@@ -573,14 +577,15 @@ class AnnotationsScriptInterface:
         params_frame = ttk.LabelFrame(main_frame, text="Output", padding=10)
         params_frame.pack(fill=tk.BOTH, padx=5, pady=5)
         params_frame.columnconfigure(1, weight=1)  # use all space in col 1
-
+        
         # image title
         row = 0
         titlelbl = ttk.Label(params_frame, text="Title: ")
         titlelbl.grid(column=0, row=row, sticky="WENS")
         self.title = tk.StringVar(self.root, value=self.cli_args.title)
         title_entry = ttk.Entry(params_frame, textvariable=self.title)
-        title_entry.grid(column=1, row=row, columnspan=3, sticky="WENS", padx=2, pady=2)
+        title_entry.grid(column=1, row=row, sticky="WENS", padx=2, pady=2)
+        ttk.Label(params_frame, text="").grid(column=2, row=row, sticky="WENS")
 
         # Logo file selection
         row = row + 1
@@ -588,36 +593,50 @@ class AnnotationsScriptInterface:
         logolbl.grid(column=0, row=row, sticky="WENS")
         self.logo_path = tk.StringVar(self.root, value=self.cli_args.logo_path)
         logo_file_entry = ttk.Entry(params_frame, textvariable=self.logo_path)
-        logo_file_entry.grid(column=1, row=row, columnspan=3, sticky="WENS", padx=2, pady=2)
+        logo_file_entry.grid(column=1, row=row, sticky="WENS", padx=2, pady=2)
+        
         browsebtn = ttk.Button(params_frame, text="Browse", command=self._browse_logo_file, style="TButton")
-        browsebtn.grid(column=4, row=row, sticky="W")
+        browsebtn.grid(column=2, row=row, sticky="W")
 
         # Output file name
         row = row + 1
-        outputlbl = ttk.Label(params_frame, text="Output file: ")
-        outputlbl.grid(column=0, row=row, sticky="WENS")
+        output_label = ttk.Label(params_frame, text="Output file: ")
+        output_label.grid(column=0, row=row, sticky="WENS")
         self.output = tk.StringVar(self.root, value=self.cli_args.output)
         output_file_entry = ttk.Entry(params_frame, textvariable=self.output)
-        output_file_entry.grid(column=1, row=row, columnspan=3, sticky="WENS", padx=2, pady=2)
+        output_file_entry.grid(column=1, row=row, sticky="WENS", padx=2, pady=2)
 
-        # Overlay transparency
-        overlay_alpha_label = ttk.Label(params_frame, text="Overlay: ")
-        overlay_alpha_label.grid(column=0, row=row, sticky="WENS")
+        # Overlay settings
+        overlay_settings_label = ttk.Label(params_frame, text="Overlay: ")
+        overlay_settings_label.grid(column=0, row=row, sticky="WENS")
+
+        overlay_alpha_frame = ttk.Frame(params_frame)
+        overlay_alpha_frame.grid(column=1, row=row, sticky="WENS")
+        alpha_label = ttk.Label(overlay_alpha_frame, text="Alpha:")
+        alpha_label.pack(side=tk.LEFT, padx=5)
+        
         self.overlay_alpha_var = tk.DoubleVar(value=self.cli_args.overlay_alpha)
-        overlay_alpha_slider = ttk.Scale(
-            params_frame,
-            from_=0.0,
-            to=1.0,
-            orient=tk.HORIZONTAL,
+        overlay_alpha_slider = ttk.Scale(overlay_alpha_frame,
+            from_=0.0, to=1.0, orient=tk.HORIZONTAL,
             variable=self.overlay_alpha_var
         )
-        overlay_alpha_slider.grid(column=1, row=row, columnspan=3, sticky="WENS", padx=2, pady=2)
-        self.overlay_alpha_value = ttk.Label(params_frame, text=f"{self.cli_args.overlay_alpha}")
-        self.overlay_alpha_value.grid(column=4, row=row, sticky="WENS")
+        overlay_alpha_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         tksiril.create_tooltip(overlay_alpha_slider, "Adjust the visibility of "
                 "the annotation overlays. Smaller values result in more "
                 "transparent overlays.")
+        self.overlay_alpha_label = ttk.Label(overlay_alpha_frame, text=f"{self.cli_args.overlay_alpha}")
+        self.overlay_alpha_label.pack(side=tk.RIGHT, padx=5)
         self.overlay_alpha_var.trace_add("write", self._update_alpha_label)
+
+        self.overlay_type_var = tk.StringVar(self.root, value=self.cli_args.overlay_type)
+        overlay_type_cb = ttk.Combobox(params_frame, 
+            textvariable=self.overlay_type_var,
+            values = ('circles', 'boxes'),
+            state="readonly", justify='center', width=5)
+        overlay_type_cb.grid(column=2, row=row, sticky="WENS")
+        tksiril.create_tooltip(overlay_type_cb, 
+            "The type of annotations to draw around galaxies.")
+
 
         # Load in Siril options
         row = row + 1
@@ -625,7 +644,7 @@ class AnnotationsScriptInterface:
         loadlbl.grid(column=0, row=row, sticky="WENS")
         self.load_in_siril = tk.StringVar(None, 'C')
         load_frame = ttk.Frame(params_frame)
-        load_frame.grid(column=1, row=row, columnspan=4, sticky="WENS")
+        load_frame.grid(column=1, row=row, columnspan=2, sticky="WENS")
         rbtn = ttk.Radiobutton(load_frame, text='Combined', value='C', variable=self.load_in_siril)
         rbtn.pack(side=tk.LEFT, padx=5)
         tksiril.create_tooltip(rbtn, "Load the combined result image in Siril")
@@ -709,13 +728,15 @@ class AnnotationsScriptInterface:
                     title = self.cli_args.title
                     logo_path = self.cli_args.logo_path
                     overlay_alpha = self.cli_args.overlay_alpha
+                    overlay_type = self.cli_args.overlay_type
                 else:
                     output = self.output.get()
                     title = self.title.get()
                     logo_path = self.logo_path.get()
                     overlay_alpha = float(self.overlay_alpha_var.get())
+                    overlay_type = self.overlay_type_var.get()
                     # update config file
-                    self.save_config_file(logo_path, overlay_alpha, None)
+                    self.save_config_file(logo_path, overlay_alpha, overlay_type, None)
 
                 # Get current image
                 fit = self.siril.get_image()
@@ -731,7 +752,7 @@ class AnnotationsScriptInterface:
                     return
 
                 # Create the annotated image
-                found = annotate_fit(self.siril, fit, self.catalogs, output, title, logo_path, overlay_alpha)
+                found = annotate_fit(self.siril, fit, self.catalogs, output, title, logo_path, overlay_alpha, overlay_type)
                 
                 if found > 0:
                     self.siril.log("Annotations image created successfully.", color=s.LogColor.GREEN)
@@ -773,17 +794,18 @@ class AnnotationsScriptInterface:
 
     def _update_alpha_label(self, *args):
         """Update the overlay alpha value label when slider changes"""
-        self.overlay_alpha_value.config(text=f"{self.overlay_alpha_var.get():.2f}")
+        self.overlay_alpha_label.config(text=f"{self.overlay_alpha_var.get():.2f}")
 
     def load_config_file(self):
         """
         Check for a saved options in the configuration file.
-        Returns (logo_path, overlay_alpha, selected_catalogs) or default values if not found.
+        Returns (logo_path, overlay_alpha, overlay_type, selected_catalogs) or default values if not found.
         """
         config_dir = self.siril.get_siril_configdir()
         config_file_path = os.path.join(config_dir, CONFIG_FILENAME)
         logo_path = None
         overlay_alpha = 0.6
+        overlay_type = "circle"
         selected_catalogs = None
         if os.path.isfile(config_file_path):
             with open(config_file_path, 'r') as file:
@@ -795,10 +817,12 @@ class AnnotationsScriptInterface:
                 if len(lines) > 1:
                     overlay_alpha = float(lines[1].strip())
                 if len(lines) > 2:
+                    overlay_type = lines[2].strip()
+                if len(lines) > 3:
                     selected_catalogs = lines[2].strip()
-        return logo_path, overlay_alpha, selected_catalogs
+        return logo_path, overlay_alpha, overlay_type, selected_catalogs
 
-    def save_config_file(self, logo_path, overlay_alpha, selected_catalogs=None):
+    def save_config_file(self, logo_path, overlay_alpha, overlay_type, selected_catalogs=None):
         """
         Save the options to the configuration file.
         """
@@ -808,6 +832,7 @@ class AnnotationsScriptInterface:
             with open(config_file_path, 'w') as file:
                 file.write(logo_path + "\n")
                 file.write(f"{overlay_alpha:.2f}" + "\n")
+                file.write(overlay_type + "\n")
                 if selected_catalogs is not None:
                     file.write(str(selected_catalogs) + "\n")
         except Exception as e:
@@ -824,6 +849,8 @@ def main():
                         help="Optional logo image path")
     parser.add_argument("-overlay_alpha", type=float, default=0.6,
                         help="Optional overlay alpha value")
+    parser.add_argument("-overlay_type", type=str, default="circles",
+                        help="Optional type of annotation overlays to draw (circles, boxes)")
 
     args = parser.parse_args()
 
