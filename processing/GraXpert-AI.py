@@ -37,6 +37,8 @@ Models licensed as CC-BY-NC-SA-4.0
 # 1.0.6 Fix a bug relating to printing the used inference providers
 # 1.0.7 More bugfixes
 # 1.0.8 Fix interpretation of a TkBool variable as an integer
+# 1.0.9 Remove -batch option from -bge -h: this option is not relevant to BG
+#       extraction
 
 import os
 import re
@@ -76,7 +78,7 @@ onnx_helper.install_onnxruntime()
 
 import onnxruntime
 
-VERSION = "1.0.8"
+VERSION = "1.0.9"
 DENOISE_CONFIG_FILENAME = "graxpert_denoise_model.conf"
 BGE_CONFIG_FILENAME = "graxpert_bge_model.conf"
 DECONVOLVE_STARS_CONFIG_FILENAME = "graxpert_deconv_stars_model.conf"
@@ -3671,8 +3673,6 @@ def main():
                                            help="Correction type ('subtraction' (default) or 'division')")
                     bge_parser.add_argument("-smoothing", type=float, default=1.0,
                                            help="Smoothing (0.0-1.0)")
-                    bge_parser.add_argument("-batch", type=int, default=4,
-                                           help="Batch size for processing")
                     bge_parser.add_argument("-model", type=str,
                                            help="Model name to use (directory name in GraXpert models folder)")
                     bge_parser.add_argument("-gpu", action="store_true", default=True,
