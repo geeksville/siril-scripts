@@ -559,7 +559,7 @@ class ContinuumSubtractionInterface:
             selection = self.siril.get_siril_selection()
                 
             using_whole_image = False
-            if selection[2] <= 0 or selection[3] <= 0:
+            if selection is None or selection[2] <= 0 or selection[3] <= 0:
                 shape = self.siril.get_image_shape()
                 selection = (0, 0, shape[2] - 1, shape[1] - 1)
                 using_whole_image = True

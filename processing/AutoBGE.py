@@ -338,7 +338,10 @@ class GradientRemovalInterface:
             selection_poly = s.Polygon.from_rectangle(selection, color=0xFF000080, fill=True)
             self.siril.overlay_add_polygon(selection_poly)
         else:
-            self.siril.overlay_draw_polygon(color=0xFF000080, fill=True)
+            try:
+                self.siril.overlay_draw_polygon(color=0xFF000080, fill=True)
+            except s.MouseModeError:
+                messagebox.showwarning("Warning", "Mouse must be in normal drag/select mode to draw a polygon")
 
     # Action methods
     def clear_exclusion_areas(self):
