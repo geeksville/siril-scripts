@@ -53,10 +53,9 @@ from ttkthemes import ThemedTk
 from scipy.interpolate import Rbf
 
 VERSION = "1.0.0"
-REQUIRES_SIRILPY = "0.7.41"
 
-if not s.check_module_version(f'>={REQUIRES_SIRILPY}'):
-    print(f"Error: requires sirilpy version {REQUIRES_SIRILPY} or higher")
+if not s.check_module_version(">=0.7.41"):
+    print("Error: requires sirilpy version 0.7.41 or higher")
     sys.exit(1)
 
 class GradientRemovalInterface:
