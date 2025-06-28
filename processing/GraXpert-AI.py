@@ -39,7 +39,23 @@ Models licensed as CC-BY-NC-SA-4.0
 # 1.0.8  Fix interpretation of a TkBool variable as an integer
 # 1.0.9  Remove -batch option from -bge -h: this option is not relevant to BG
 #        extraction
-# 1.0.10 Increase timeout on GraXpert version check (required if run offline
+# 1.0.0  Initial release
+# 1.0.1  Bug fix in handling mono images in BGE; improved fallback behaviour
+#        for inferencing runtime errors (try again with CPU backend)
+# 1.0.2  Interim fix for MacOS to prevent issues with the CREATE_ML_PROGRAM
+#        flag; make the defaults match GraXpert (except smoothing: the
+#        default GraXpert smoothing value of 0.0 seems too low so this is
+#        set at 0.5)
+# 1.0.3  Fix an error with use of the onnx_helper
+# 1.0.4  Fix GPU checkbox on MacOS
+# 1.0.5  Fallback to CPU is more robust
+# 1.0.6  Fix a bug relating to printing the used inference providers
+# 1.0.7  More bugfixes
+# 1.0.8  Fix interpretation of a TkBool variable as an integer
+# 1.0.9  Remove -batch option from -bge -h: this option is not relevant to BG
+#        extraction
+# 1.0.10 CR: Change operation order
+# 1.0.11 Increase timeout on GraXpert version check (required if run offline
 #        apparently) and move check to ModelManager __init__ so that there is
 #        no delay at startup
 
@@ -170,8 +186,8 @@ def check_graxpert_version(executable):
 
 def get_available_local_operations():
     operations = {
-            'denoise': 'Denoising',
-            'bge': 'Background Extraction'
+            'bge': 'Background Extraction',
+            'denoise': 'Denoising'
         }
     # Get the GraXpert directory
     deconvolution_stars_dir = os.path.join(user_data_dir(appname="GraXpert"), 'deconvolution-stars-ai-models')
@@ -188,8 +204,8 @@ def get_available_operations():
     version = Version(_graxpert_version)
     # If version check failed or version is less than 3.0.0, abort initialization
     operations = {
-            'denoise': 'Denoising',
-            'bge': 'Background Extraction'
+            'bge': 'Background Extraction',
+            'denoise': 'Denoising'
         }
     if (version.release[0] == 3 and version.release[1] == 1 and
             version.release[2] == 0 and version.is_prerelease):
@@ -320,8 +336,8 @@ class GraXpertModelManager:
         self.operations = get_available_operations()
 
         self.operation_cmd_map = {
-            'denoise': 'denoising',
             'bge': 'background-extraction',
+            'denoise': 'denoising',
             'deconvolution-stars': 'deconv-stellar',
             'deconvolution-object': 'deconv-obj'
         }
@@ -369,7 +385,7 @@ class GraXpertModelManager:
         op_frame = ttk.LabelFrame(main_frame, text="Operation", padding="5")
         op_frame.pack(fill=tk.X, pady=5)
 
-        self.operation_var = tk.StringVar(value="denoise")
+        self.operation_var = tk.StringVar(value="bge")
 
         max_columns = 2
         for i, (op_key, op_name) in enumerate(self.operations.items()):
@@ -2341,11 +2357,11 @@ class GUIInterface:
         self.create_widgets()
 
         # Set default operation to denoise
-        if 'denoise' in self.operations:
-            self.selected_operation.set('denoise')
+        if 'bge' in self.operations:
+            self.selected_operation.set('bge')
             # Set the corresponding display name in the dropdown
-            if 'denoise' in self.operations:
-                op_display_name = self.operations['denoise']
+            if 'bge' in self.operations:
+                op_display_name = self.operations['bge']
                 self.operation_display_var.set(op_display_name)
             self._on_operation_selected(None)  # Initialize the correct processor
 
