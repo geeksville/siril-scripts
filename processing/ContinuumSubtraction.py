@@ -217,7 +217,7 @@ class ContinuumSubtractionInterface:
         self.initial_narrowband_filename = self.siril.get_image_filename()
         self.initial_narrowband_data = self.siril.get_image_pixeldata()
         self.narrowband_header = self.siril.get_image_fits_header()
-        
+
         # This flag will help us determine if a new narrowband image has been loaded
         self.user_changed_narrowband = False
         
@@ -645,7 +645,8 @@ class ContinuumSubtractionInterface:
             # Set the result as the current image
             with self.siril.image_lock():
                 self.siril.set_image_pixeldata(result.astype(np.float32))
-            self.siril.set_image_metadata_from_header_string(self.narrowband_header)
+            if isinstance(self.narrowband_header, str):
+                self.siril.set_image_metadata_from_header_string(self.narrowband_header)
 
             # Update status
             self.status_var.set(message)
