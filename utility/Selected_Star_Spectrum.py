@@ -8,6 +8,11 @@
 # sources that are too bright for Gaia's processing pipeline and are
 # therefore excluded from the catalogue.)
 
+# 1.0.0 Initial release
+# 1.0.1 Updated release
+# 1.0.2 Update to account for change to get_siril_selection which now returns None
+#       if no selection is set.
+
 import sirilpy as s
 s.ensure_installed("astropy", "astroquery", "GaiaXPy", "certifi", "ssl")
 import sys
@@ -18,7 +23,7 @@ import numpy as np
 from astroquery.gaia import Gaia
 import gaiaxpy
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 def plot_spectrum(siril, from_cli, fmt):
     # Retrieve the selected star's position
@@ -121,7 +126,9 @@ def main():
         selh = args.size
         siril.set_siril_selection(selx, sely, selw, selh)
     else:
-        selx, sely, selw, selh = siril.get_siril_selection()
+        selection = siril.get_siril_selection()
+        if selection is not None:
+            selx, sely, selw, selh = selection
 
     if (not selw or not selh):
         e = "Error: no selection set"
