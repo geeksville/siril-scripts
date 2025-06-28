@@ -24,21 +24,24 @@ Models licensed as CC-BY-NC-SA-4.0
 """
 
 # Version History
-# 1.0.0 Initial release
-# 1.0.1 Bug fix in handling mono images in BGE; improved fallback behaviour
-#       for inferencing runtime errors (try again with CPU backend)
-# 1.0.2 Interim fix for MacOS to prevent issues with the CREATE_ML_PROGRAM
-#       flag; make the defaults match GraXpert (except smoothing: the
-#       default GraXpert smoothing value of 0.0 seems too low so this is
-#       set at 0.5)
-# 1.0.3 Fix an error with use of the onnx_helper
-# 1.0.4 Fix GPU checkbox on MacOS
-# 1.0.5 Fallback to CPU is more robust
-# 1.0.6 Fix a bug relating to printing the used inference providers
-# 1.0.7 More bugfixes
-# 1.0.8 Fix interpretation of a TkBool variable as an integer
-# 1.0.9 Remove -batch option from -bge -h: this option is not relevant to BG
-#       extraction
+# 1.0.0  Initial release
+# 1.0.1  Bug fix in handling mono images in BGE; improved fallback behaviour
+#        for inferencing runtime errors (try again with CPU backend)
+# 1.0.2  Interim fix for MacOS to prevent issues with the CREATE_ML_PROGRAM
+#        flag; make the defaults match GraXpert (except smoothing: the
+#        default GraXpert smoothing value of 0.0 seems too low so this is
+#        set at 0.5)
+# 1.0.3  Fix an error with use of the onnx_helper
+# 1.0.4  Fix GPU checkbox on MacOS
+# 1.0.5  Fallback to CPU is more robust
+# 1.0.6  Fix a bug relating to printing the used inference providers
+# 1.0.7  More bugfixes
+# 1.0.8  Fix interpretation of a TkBool variable as an integer
+# 1.0.9  Remove -batch option from -bge -h: this option is not relevant to BG
+#        extraction
+# 1.0.10 Increase timeout on GraXpert version check (required if run offline
+#        apparently) and move check to ModelManager __init__ so that there is
+#        no delay at startup
 
 import os
 import re
@@ -78,7 +81,7 @@ onnx_helper.install_onnxruntime()
 
 import onnxruntime
 
-VERSION = "1.0.9"
+VERSION = "1.0.10"
 DENOISE_CONFIG_FILENAME = "graxpert_denoise_model.conf"
 BGE_CONFIG_FILENAME = "graxpert_bge_model.conf"
 DECONVOLVE_STARS_CONFIG_FILENAME = "graxpert_deconv_stars_model.conf"
@@ -123,7 +126,8 @@ def check_graxpert_version(executable):
 
             # Wait for process with timeout (200ms)
             try:
-                stdout, stderr = process.communicate(timeout=10)
+                print("Checking GraXpert version...")
+                stdout, stderr = process.communicate(timeout=30)
                 exit_status = process.returncode
             except subprocess.TimeoutExpired:
                 process.kill()
@@ -312,6 +316,7 @@ class GraXpertModelManager:
         self.models_by_operation = {}
 
         # Check GraXpert version and set up operations accordingly
+        check_graxpert_version(get_executable(siril))
         self.operations = get_available_operations()
 
         self.operation_cmd_map = {
@@ -2291,6 +2296,9 @@ class GUIInterface:
 
         self.style = tksiril.standard_style()
 
+        self.model_manager = None
+        self.action_frame = None
+
         self.siril = siril
         # Get available operations
         self.operations = get_available_local_operations()
@@ -2621,6 +2629,7 @@ class GUIInterface:
 
         # Action buttons
         action_frame = ttk.Frame(main_frame)
+        self.action_frame = action_frame
         action_frame.pack(fill=tk.X, pady=10)
 
         # Apply button that handles single image and sequence
@@ -2632,13 +2641,11 @@ class GUIInterface:
         apply_btn.pack(side=tk.LEFT, padx=5)
         tksiril.create_tooltip(apply_btn, "Apply the selected operation to the loaded image or sequence.")
 
-        model_manager = GraXpertModelManager(action_frame, self.siril, self.update_dropdowns)
-
         # Create a button that will open the model manager dialog
         model_button = ttk.Button(
             action_frame,
             text="GraXpert Model Manager",
-            command=model_manager.show_dialog
+            command=self.load_model_manager
         )
         model_button.pack(side=tk.LEFT, padx=5)
         tksiril.create_tooltip(model_button, "Check and download remote GraXpert models")
@@ -2728,6 +2735,11 @@ class GUIInterface:
         # Update the window title to reflect the current operation
         op_display_name = self.operations.get(operation, "Operation")
         self.root.title(f"GraXpert AI {op_display_name} - Siril interface v{VERSION}")
+
+    def load_model_manager(self):
+        if self.model_manager is None:
+            self.model_manager = GraXpertModelManager(self.action_frame, self.siril, self.update_dropdowns)
+        self.model_manager.show_dialog()
 
     def update_dropdowns(self):
         self._populate_model_dropdown()
@@ -3583,7 +3595,6 @@ def main():
     siril = s.SirilInterface()
     try:
         siril.connect()
-        check_graxpert_version(get_executable(siril))
 
         if siril.is_cli():
             # Top level argument parser
