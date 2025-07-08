@@ -2,7 +2,9 @@
 # AutoBGE for Siril - Ported from PyQt to Siril/tkinter
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 1.0.0
+# Version 1.0.1
+# 1.0.0 Initial release
+# 1.0.1 Clear rectangular selection after setting exclusion area
 
 """
 Auto Background Extraction script for Siril
@@ -52,7 +54,7 @@ from tkinter import ttk, messagebox
 from ttkthemes import ThemedTk
 from scipy.interpolate import Rbf
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 if not s.check_module_version(">=0.7.41"):
     print("Error: requires sirilpy version 0.7.41 or higher")
@@ -336,6 +338,7 @@ class GradientRemovalInterface:
         if selection is not None:
             selection_poly = s.Polygon.from_rectangle(selection, color=0xFF000080, fill=True)
             self.siril.overlay_add_polygon(selection_poly)
+            self.siril.set_siril_selection(0, 0, 0, 0)
         else:
             try:
                 self.siril.overlay_draw_polygon(color=0xFF000080, fill=True)
