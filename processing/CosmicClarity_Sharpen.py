@@ -1,7 +1,10 @@
 # (c) Adrian Knagg-Baugh 2024
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Version: 1.0.1
+# Version: 1.0.3
 # 1.0.1: convert "requires" to use exception handling
+# 1.0.2: misc updates
+# 1.0.3: Use tiffile instead of savetif32 to save the input file
+#        This avoids colour shifts if the image profile != the display profile
 
 import sirilpy as s
 s.ensure_installed("ttkthemes", "tiffile")
@@ -21,7 +24,7 @@ from sirilpy import tksiril
 import numpy as np
 import tiffile
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 
 if s.check_module_version(">=0.6.0") and sys.platform.startswith("linux"):
     import sirilpy.tkfilebrowser as filedialog
@@ -324,7 +327,7 @@ class SirilCosmicClarityInterface:
                 os.makedirs("output", exist_ok=True)
 
                 inputpath = os.path.join(directory, "input")
-                inputfilename = os.path.join(inputpath, basename)
+                inputfilename = os.path.join(inputpath, basename) + str(".tif")
                 outputpath = os.path.join(directory, "output")
                 outputfilename = os.path.join(outputpath, f"{basename}_sharpened.tif")
 
@@ -337,7 +340,21 @@ class SirilCosmicClarityInterface:
                         except Exception as e:
                             print(f"Failed to delete {tiff_file}: {e}")
 
-                self.siril.cmd("savetif32", f"\"{inputfilename}\"")
+                pixels = self.siril.get_image_pixeldata()
+
+                # Determine photometric and reshape if needed
+                if pixels.ndim == 2:
+                    # Mono image
+                    photometry = 'minisblack'
+                elif pixels.ndim == 3 and pixels.shape[0] in (1, 3):
+                    # Multi-sample image in (samples, height, width)
+                    photometry = 'minisblack' if pixels.shape[0] == 1 else 'rgb'
+                    pixels = pixels[0] if pixels.shape[0] == 1 else pixels.transpose(1, 2, 0)
+                else:
+                    raise ValueError(f"Unexpected image shape: {pixels.shape}")
+
+                # Write TIFF without ICC profile
+                tiffile.imwrite(inputfilename, pixels, photometric=photometry, planarconfig='contig')
 
                 print(f"Running sharpening with mode: {mode}, stellar_amount: {stellar_amount}, non_stellar_strength: {non_stellar_strength}")
                 self.siril.update_progress("Seti Astro Cosmic Clarity Sharpen starting...", 0)
@@ -360,7 +377,7 @@ class SirilCosmicClarityInterface:
                     elif pixel_data.ndim == 3 and pixel_data.shape[2] == 3:
                         pixel_data = np.transpose(pixel_data, (2, 0, 1))
                         pixel_data = np.ascontiguousarray(pixel_data)
-                    pixel_data = pixel_data[:, ::-1, :]
+                    #pixel_data = pixel_data[:, ::-1, :]
                     force_16bit = self.siril.get_siril_config("core", "force_16bit")
                     if (force_16bit):
                         pixel_data = np.rint(pixel_data * 65536).astype(np.uint16)
