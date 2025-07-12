@@ -1,10 +1,11 @@
 # (c) Adrian Knagg-Baugh 2024
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Version 1.0.1
+# Version 1.0.4
 # 1.0.1: AKB - convert "requires" to use exception handling
 # 1.0.2: Miscellaneous fixes
 # 1.0.3: Use tiffile instead of savetif32 to save the input file
 #        This avoids colour shifts if the image profile != the display profile
+# 1.0.4: Fix bug in 1.0.3 when processing mono images
 
 import sirilpy as s
 # Ensure dependencies are installed
@@ -24,7 +25,7 @@ from sirilpy import tksiril
 import numpy as np
 import tiffile
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 
 if s.check_module_version(">=0.6.0") and sys.platform.startswith("linux"):
     import sirilpy.tkfilebrowser as filedialog
@@ -305,16 +306,20 @@ class CosmicClarityInterface:
                             print(f"Failed to delete {tiff_file}: {e}")
 
                 pixels = self.siril.get_image_pixeldata()
-                # Write a tiff. We do this using tiffile instead of savetif32 as we do *not* want to save the
-                # ICC profile here, just the pixel data, otherwise a colour shift occurs when the data gets
-                # read back in afterwards.
-                photometry = 'minisblack' if pixels.shape[0] == 1 else 'rgb'
-                if pixels.shape[0] == 1:
-                    pixels = pixels[0]
-                else:
-                    pixels = pixels.transpose(1, 2, 0)
-                tiffile.imwrite(inputfilename, pixels, photometric=photometry, planarconfig='contig')
 
+                # Determine photometric and reshape if needed
+                if pixels.ndim == 2:
+                    # Mono image
+                    photometry = 'minisblack'
+                elif pixels.ndim == 3 and pixels.shape[0] in (1, 3):
+                    # Multi-sample image in (samples, height, width)
+                    photometry = 'minisblack' if pixels.shape[0] == 1 else 'rgb'
+                    pixels = pixels[0] if pixels.shape[0] == 1 else pixels.transpose(1, 2, 0)
+                else:
+                    raise ValueError(f"Unexpected image shape: {pixels.shape}")
+
+                # Write TIFF without ICC profile
+                tiffile.imwrite(inputfilename, pixels, photometric=photometry, planarconfig='contig')
                 print(f"Running denoise with mode: {mode}, denoise_strength: {denoise_strength}")
                 self.siril.update_progress("Seti Astro Cosmic Clarity Denoise starting...", 0)
 
