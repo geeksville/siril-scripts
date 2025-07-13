@@ -39,25 +39,11 @@ Models licensed as CC-BY-NC-SA-4.0
 # 1.0.8  Fix interpretation of a TkBool variable as an integer
 # 1.0.9  Remove -batch option from -bge -h: this option is not relevant to BG
 #        extraction
-# 1.0.0  Initial release
-# 1.0.1  Bug fix in handling mono images in BGE; improved fallback behaviour
-#        for inferencing runtime errors (try again with CPU backend)
-# 1.0.2  Interim fix for MacOS to prevent issues with the CREATE_ML_PROGRAM
-#        flag; make the defaults match GraXpert (except smoothing: the
-#        default GraXpert smoothing value of 0.0 seems too low so this is
-#        set at 0.5)
-# 1.0.3  Fix an error with use of the onnx_helper
-# 1.0.4  Fix GPU checkbox on MacOS
-# 1.0.5  Fallback to CPU is more robust
-# 1.0.6  Fix a bug relating to printing the used inference providers
-# 1.0.7  More bugfixes
-# 1.0.8  Fix interpretation of a TkBool variable as an integer
-# 1.0.9  Remove -batch option from -bge -h: this option is not relevant to BG
-#        extraction
 # 1.0.10 CR: Change operation order
 # 1.0.11 Increase timeout on GraXpert version check (required if run offline
 #        apparently) and move check to ModelManager __init__ so that there is
 #        no delay at startup
+# 1.1.0 For beta3+: use ONNXHelper.run(), remove special macOS handling
 
 import os
 import re
@@ -96,6 +82,7 @@ onnx_helper = s.ONNXHelper()
 onnx_helper.install_onnxruntime()
 
 import onnxruntime
+onnxruntime.set_default_logger_severity(4)
 
 VERSION = "1.0.11"
 DENOISE_CONFIG_FILENAME = "graxpert_denoise_model.conf"
@@ -270,7 +257,8 @@ def list_available_models(models_dir):
 
 def get_image_data_from_file(siril, path):
     """
-    Load image data from a file.
+    Load image data from a file. If the data is not in a bit depth Siril handles it
+    will be converted to np.float32
 
     Args:
         path: Path to the image file
@@ -281,6 +269,8 @@ def get_image_data_from_file(siril, path):
     if path.lower().endswith((".fit", ".fits")):
         with fits.open(path) as hdul:
             data = hdul[0].data
+            if data.dtype not in (np.float32, np.uint16):
+                data = data.astype(np.float32)
             header = hdul[0].header.copy()  # Copy the header
             return data, header
     else:
@@ -953,37 +943,26 @@ class DenoiserProcessing:
 
         output = copy.deepcopy(image)
 
-        print(f"Available inference providers: {onnxruntime.get_available_providers()}")
-
         # Initialize ONNX runtime session
-        providers = []
-        if platform.system().lower() == 'darwin':
-            if ai_gpu_acceleration is True:
-                providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
-            else:
-                providers = ['CPUExecutionProvider']
-        else:
+        with s.SuppressedStderr():
             providers = onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
-
-        try:
-            session = onnxruntime.InferenceSession(ai_path, providers=providers)
-        except Exception as err:
-            error_message = str(err)
-            print("Warning: falling back to CPU.")
-            if "cudaErrorNoKernelImageForDevice" in error_message \
-                or "Error compiling model" in error_message:
-                print("ONNX cannot build an inferencing kernel for this GPU.")
-            # Retry with CPU only
-            providers = ['CPUExecutionProvider']
             try:
                 session = onnxruntime.InferenceSession(ai_path, providers=providers)
-            except ONNXRuntimeError as err:
-                messagebox.showerror("Error", "Cannot build an inference model on this device")
-                return
+            except Exception as err:
+                error_message = str(err)
+                print("Warning: falling back to CPU.")
+                if "cudaErrorNoKernelImageForDevice" in error_message \
+                    or "Error compiling model" in error_message:
+                    print("ONNX cannot build an inferencing kernel for this GPU.")
+                # Retry with CPU only
+                providers = ['CPUExecutionProvider']
+                try:
+                    session = onnxruntime.InferenceSession(ai_path, providers=providers)
+                except ONNXRuntimeError as err:
+                    messagebox.showerror("Error", "Cannot build an inference model on this device")
+                    return
 
         print(f"Using inference providers: {session.get_providers()}")
-
-        print(f"Used inference providers: {session.get_providers()}")
 
         # Process image in batches
         cancel_flag = False
@@ -1022,14 +1001,8 @@ class DenoiserProcessing:
             # Run inference
             output_tiles = []
 
-            try:
-                session_result = session.run(None, {"gen_input_image": input_tiles})[0]
-            except Exception as err:
-                error_message = str(err)
-                print("Warning: falling back to CPU.")
-                providers = ['CPUExecutionProvider']
-                session = onnxruntime.InferenceSession(ai_path, providers=providers)
-                session_result = session.run(None, {"gen_input_image": input_tiles})[0]
+            session_result, session = onnx_helper.run(session, ai_path, None, \
+                        {"gen_input_image": input_tiles}, return_first_output=True)
 
             for e in session_result:
                 output_tiles.append(e)
@@ -1432,32 +1405,24 @@ class DeconvolutionProcessing:
         output = copy.deepcopy(image)
 
         # Initialize ONNX runtime session
-        providers = []
-        if platform.system().lower() == 'darwin':
-            if ai_gpu_acceleration is True:
-                providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
-            else:
-                providers = ['CPUExecutionProvider']
-        else:
+        with s.SuppressedStderr():
             providers = onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
-
-        try:
-            session = onnxruntime.InferenceSession(ai_path, providers=providers)
-        except Exception as err:
-            error_message = str(err)
-            print("Warning: falling back to CPU.")
-            if "cudaErrorNoKernelImageForDevice" in error_message \
-                or "Error compiling model" in error_message:
-                print("ONNX cannot build an inferencing kernel for this GPU.")
-            # Retry with CPU only
-            providers = ['CPUExecutionProvider']
             try:
                 session = onnxruntime.InferenceSession(ai_path, providers=providers)
-            except ONNXRuntimeError as err:
-                messagebox.showerror("Error", "Cannot build an inference model on this device")
-                return
+            except Exception as err:
+                error_message = str(err)
+                print("Warning: falling back to CPU.")
+                if "cudaErrorNoKernelImageForDevice" in error_message \
+                    or "Error compiling model" in error_message:
+                    print("ONNX cannot build an inferencing kernel for this GPU.")
+                # Retry with CPU only
+                providers = ['CPUExecutionProvider']
+                try:
+                    session = onnxruntime.InferenceSession(ai_path, providers=providers)
+                except ONNXRuntimeError as err:
+                    messagebox.showerror("Error", "Cannot build an inference model on this device")
+                    return
 
-        print(f"Available inference providers: {onnxruntime.get_available_providers()}")
         print(f"Using inference providers: {session.get_providers()}")
 
         # Process image in batches
@@ -1513,35 +1478,12 @@ class DeconvolutionProcessing:
             conds = np.concatenate([sigma, strenght_p], axis=-1)
 
             if deconv_type == "Obj" and "1.0.0" in ai_path:
-                try:
-                    session_result = session.run(None, {"gen_input_image": input_tiles, "sigma": sigma, "strenght": strenght_p})[0]
-                except Exception as err:
-                    error_message = str(err)
-                    print("Warning: falling back to CPU.")
-                    error_patterns = ("cudaErrorNoKernelImageForDevice",
-                                      "Error compiling model")
-                    if any(pattern in error_message for pattern in error_patterns):
-                        print("ONNX cannot build an inferencing kernel for this GPU.")
-                    # Retry with CPU only
-                    print("Falling back to GPU")
-                    # Retry with CPU only
-                    providers = ['CPUExecutionProvider']
-                    session = onnxruntime.InferenceSession(ai_path, providers=providers)
-                    session_result = session.run(None, {"gen_input_image": input_tiles, "sigma": sigma, "strenght": strenght_p})[0]
+                session_result, session = onnx_helper.run(session, ai_path, None, \
+                            {"gen_input_image": input_tiles, "sigma": sigma, "strenght": strenght_p}, return_first_output=True)
+
             else:
-                try:
-                    session_result = session.run(None, {"gen_input_image": input_tiles, "params": conds})[0]
-                except Exception as err:
-                    error_message = str(err)
-                    print("Warning: falling back to CPU.")
-                    error_patterns = ("cudaErrorNoKernelImageForDevice",
-                                      "Error compiling model")
-                    if any(pattern in error_message for pattern in error_patterns):
-                        print("ONNX cannot build an inferencing kernel for this GPU.")
-                    # Retry with CPU only
-                    providers = ['CPUExecutionProvider']
-                    session = onnxruntime.InferenceSession(ai_path, providers=providers)
-                    session_result = session.run(None, {"gen_input_image": input_tiles, "sigma": sigma, "strenght": strenght_p})[0]
+                session_result, session = onnx_helper.run(session, ai_path, None, \
+                            {"gen_input_image": input_tiles, "params": conds}, return_first_output=True)
 
             for e in session_result:
                 output_tiles.append(e)
@@ -1990,30 +1932,24 @@ class BGEProcessing:
             progress_callback("Initializing ONNX runtime...", 0.25)
 
         # Initialize ONNX runtime session
-        providers = []
-        if platform.system().lower() == 'darwin':
-            if ai_gpu_acceleration is True:
-                providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
-            else:
-                providers = ['CPUExecutionProvider']
-        else:
+        with s.SuppressedStderr():
             providers = onnx_helper.get_execution_providers_ordered(ai_gpu_acceleration)
 
-        try:
-            session = onnxruntime.InferenceSession(ai_path, providers=providers)
-        except Exception as err:
-            error_message = str(err)
-            print("Warning: falling back to CPU.")
-            if "cudaErrorNoKernelImageForDevice" in error_message \
-                or "Error compiling model" in error_message:
-                print("ONNX cannot build an inferencing kernel for this GPU.")
-            # Retry with CPU only
-            providers = ['CPUExecutionProvider']
             try:
                 session = onnxruntime.InferenceSession(ai_path, providers=providers)
-            except ONNXRuntimeError as err:
-                messagebox.showerror("Error", "Cannot build an inference model on this device")
-                return
+            except Exception as err:
+                error_message = str(err)
+                print("Warning: falling back to CPU.")
+                if "cudaErrorNoKernelImageForDevice" in error_message \
+                    or "Error compiling model" in error_message:
+                    print("ONNX cannot build an inferencing kernel for this GPU.")
+                # Retry with CPU only
+                providers = ['CPUExecutionProvider']
+                try:
+                    session = onnxruntime.InferenceSession(ai_path, providers=providers)
+                except ONNXRuntimeError as err:
+                    messagebox.showerror("Error", "Cannot build an inference model on this device")
+                    return
 
         print(f"Using inference providers: {session.get_providers()}")
 
@@ -2021,20 +1957,9 @@ class BGEProcessing:
             progress_callback("Running inference...", 0.4)
 
         # Run inference
-        try:
-            background = session.run(None, {"gen_input_image": np.expand_dims(imarray_shrink, axis=0)})[0][0]
-        except onnxruntime.capi.onnxruntime_pybind11_state.RuntimeException as err:
-            error_message = str(err)
-            print("Warning: falling back to CPU.")
-            error_patterns = ("cudaErrorNoKernelImageForDevice",
-                              "Error compiling model")
-            if any(pattern in error_message for pattern in error_patterns):
-                print("ONNX cannot build an inferencing kernel for this GPU.")
-            # Retry with CPU only
-            print("Falling back to GPU")
-            providers = ['CPUExecutionProvider']
-            session = onnxruntime.InferenceSession(ai_path, providers=providers)
-            background = session.run(None, {"gen_input_image": np.expand_dims(imarray_shrink, axis=0)})[0][0]
+        background, session = onnx_helper.run(session, ai_path, None, \
+                    {"gen_input_image": np.expand_dims(imarray_shrink, axis=0)})
+        background = background[0][0]
 
         if progress_callback:
             progress_callback("Post-processing...", 0.6)
@@ -2258,9 +2183,7 @@ class BGEProcessing:
 
                 output_path = os.path.join(self.siril.get_siril_wd(),
                                           f"{output_seqname}{(i+1):05d}.fit")
-                header = None
-                if keep_bg:
-                    header = self.siril.get_seq_frame_header(i)
+                header = self.siril.get_seq_frame_header(i)
 
                 # Process the image
                 corrected = self.process_image(

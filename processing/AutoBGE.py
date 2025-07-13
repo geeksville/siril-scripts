@@ -2,9 +2,10 @@
 # AutoBGE for Siril - Ported from PyQt to Siril/tkinter
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 1.0.1
+# Version 1.0.2
 # 1.0.0 Initial release
 # 1.0.1 Clear rectangular selection after setting exclusion area
+# 1.0.2 Mono images remain mono after processing
 
 """
 Auto Background Extraction script for Siril
@@ -54,7 +55,7 @@ from tkinter import ttk, messagebox
 from ttkthemes import ThemedTk
 from scipy.interpolate import Rbf
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 if not s.check_module_version(">=0.7.41"):
     print("Error: requires sirilpy version 0.7.41 or higher")
@@ -129,6 +130,7 @@ class GradientRemovalInterface:
         # ADBE uses CV so we do everything in HWC format
         if len(self.image.shape) == 3:
             self.image = self.image.transpose(1, 2, 0)
+        self.originally_mono = len(self.image.shape) == 2
         self.originally_16bit = self.image.dtype == np.uint16
         if self.originally_16bit:
             self.image = self.image.astype(np.float32) / 65535
@@ -356,10 +358,12 @@ class GradientRemovalInterface:
         show_bg = self.show_gradient_var.get()
         if show_bg:
             with self.siril.image_lock():
-                self.siril.set_image_pixeldata(self.gradient_background)
+                output_image = self.gradient_background[0] if self.originally_mono else self.corrected_image
+                self.siril.set_image_pixeldata(output_image)
         else:
             with self.siril.image_lock():
-                self.siril.set_image_pixeldata(self.corrected_image)
+                output_image = self.corrected_image[0] if self.originally_mono else self.corrected_image
+                self.siril.set_image_pixeldata(output_image)
 
     def process_image(self):
         """
@@ -490,7 +494,8 @@ class GradientRemovalInterface:
                                     "poly degree={self.poly_degree}, "
                                     "RBF smoothness={self.rbf_smooth}")
         with self.siril.image_lock():
-            self.siril.set_image_pixeldata(self.corrected_image)
+            output_image = self.corrected_image[0] if self.originally_mono else self.corrected_image
+            self.siril.set_image_pixeldata(output_image)
 
         self.show_gradient_checkbox.config(state='enabled')
         self.show_gradient_checkbox.update()
