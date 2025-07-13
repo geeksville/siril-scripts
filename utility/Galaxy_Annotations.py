@@ -14,6 +14,7 @@ and a thumbnail table of the found galaxies.
 # 1.0.0 Initial release
 # 1.0.1 Fix saving result images when output name contains dots
 # 1.0.2 Added option to select circle or box annotation overlays
+# 1.0.3 Update the GUI to use a ScrollableFrame for the catalogs list
 
 # Core module imports
 import os
@@ -54,7 +55,7 @@ from astropy.wcs import WCS
 from astroquery.simbad import Simbad
 import pandas as pd
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 CONFIG_FILENAME = "Galaxy_Annotations.conf"
 
 def annotate_fit(siril, fit, catalogs, output, title, logo_path, overlay_alpha, overlay_type):
@@ -313,7 +314,6 @@ def annotate_fit(siril, fit, catalogs, output, title, logo_path, overlay_alpha, 
         all_patches.append(patch)
         filter_idxs.append(i)
         
-
     plt.tight_layout()
     siril.update_progress("Saving overlay image...", 0.2)
     plt.savefig(output_overlay_fname, bbox_inches='tight', pad_inches=0.1, dpi=dpi)
@@ -424,7 +424,6 @@ def get_table_filename(output_basename):
 def get_combined_filename(output_basename):
     return get_output_filename(output_basename, '')
 
-
 class CatalogEntry:
     """ This class provides properties of a catalog entry """
     def __init__(self, description, color='#ffffff', selection_default=True):
@@ -454,6 +453,7 @@ class AnnotationsScriptInterface:
 
         self.cli_args = cli_args
         self.root = root
+        self.screen_height = None
         
         # Catalog definitions
         self.catalogs = {
@@ -482,6 +482,7 @@ class AnnotationsScriptInterface:
             self.root.title(f"Galaxy Annotations Script - v{VERSION}")
             self.root.resizable(False, False)
             self.style = tksiril.standard_style()
+            self.screen_height = root.winfo_vrootheight()
 
         # Initialize Siril connection
         self.siril = s.SirilInterface()
@@ -551,7 +552,6 @@ class AnnotationsScriptInterface:
             self.logo_path.set(filename)
             # update config file
             self.save_config_file(filename, self.overlay_alpha_var.get(), self.overlay_type_var.get(), None)
-
 
     def create_widgets(self):
         """Create the GUI's widgets, connect signals etc. """
@@ -637,7 +637,6 @@ class AnnotationsScriptInterface:
         tksiril.create_tooltip(overlay_type_cb, 
             "The type of annotations to draw around galaxies.")
 
-
         # Load in Siril options
         row = row + 1
         loadlbl = ttk.Label(params_frame, text="Load in Siril: ")
@@ -658,36 +657,62 @@ class AnnotationsScriptInterface:
         rbtn.pack(side=tk.LEFT, padx=5)
         tksiril.create_tooltip(rbtn, "Just create output files without loading anything in Siril")
 
-        # Catalog selection
-        catalogs_frame = ttk.LabelFrame(main_frame, text="Catalogs", padding=10)
-        catalogs_frame.pack(fill=tk.X, padx=5, pady=0)
+        # Catalogs container
+        catalogs_container = ttk.LabelFrame(main_frame, text="Catalogs", padding=10)
+        catalogs_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=0)
 
-        i = 0
-        for key, value in self.catalogs.items():
-            value.checkbox_var = tk.BooleanVar(self.root)
-            value.checkbox_var.set(value.selection_default)
-            checkbox = ttk.Checkbutton(catalogs_frame,
-                text=key, variable=value.checkbox_var, style="TCheckbutton"
-            )
-            checkbox.grid(row=i, column=0, sticky="WENS")
-            description = value.description
-            if description is None:
-                description = key
-            label = ttk.Label(catalogs_frame, text=description)
-            label.grid(row=i, column=1, sticky="WENS")
-            i = i + 1
-            
-        # buttons for mass- (de-) selection
-        select_frame = ttk.Frame(catalogs_frame)
-        select_frame.grid(column=0, row=i, columnspan=2, sticky="WENS", pady=2)
-        select_frame.grid_columnconfigure(0, weight=1)
-        ttk.Label(select_frame, text="Select: ").grid(row=0,column=0)
-        select_all_btn = ttk.Button(select_frame, text="All", command=self.select_all)
-        select_all_btn.grid(row=0, column=1, sticky="WENS")
-        select_none_btn = ttk.Button(select_frame, text="None", command=self.select_none)
-        select_none_btn.grid(row=0, column=2, sticky="WENS")
-        select_default_btn = ttk.Button(select_frame, text="Defaults", command=self.select_default)
-        select_default_btn.grid(row=0, column=3, sticky="WENS")
+        # Scrollable frame if screen height < 1024, otherwise fixed frame
+        if self.screen_height is not None and self.screen_height < 1024:
+            scrollable_catalogs = tksiril.ScrollableFrame(catalogs_container)
+            scrollable_catalogs.pack(fill=tk.BOTH, expand=True)
+
+            # Add checkboxes inside the scrollable frame
+            for i, (key, value) in enumerate(self.catalogs.items()):
+                value.checkbox_var = tk.BooleanVar(self.root)
+                value.checkbox_var.set(value.selection_default)
+                checkbox = ttk.Checkbutton(scrollable_catalogs.scrollable_frame,
+                    text=key, variable=value.checkbox_var, style="TCheckbutton"
+                )
+                checkbox.grid(row=i, column=0, sticky="W", padx=2, pady=2)
+                desc = value.description if value.description else key
+                label = ttk.Label(scrollable_catalogs.scrollable_frame, text=desc)
+                label.grid(row=i, column=1, sticky="W", padx=2, pady=2)
+
+            scrollable_catalogs.add_mousewheel_binding()
+            # Selection buttons frame (below the scrollable area)
+            select_frame = ttk.Frame(catalogs_container)
+            select_frame.pack(fill=tk.X, pady=5)
+
+            ttk.Label(select_frame, text="Select: ").pack(side=tk.LEFT, padx=(5, 2))
+            ttk.Button(select_frame, text="All", command=self.select_all).pack(side=tk.LEFT, padx=2)
+            ttk.Button(select_frame, text="None", command=self.select_none).pack(side=tk.LEFT, padx=2)
+            ttk.Button(select_frame, text="Defaults", command=self.select_default).pack(side=tk.LEFT, padx=2)
+
+        else:
+            for i, (key, value) in enumerate(self.catalogs.items()):
+                value.checkbox_var = tk.BooleanVar(self.root)
+                value.checkbox_var.set(value.selection_default)
+                checkbox = ttk.Checkbutton(catalogs_container,
+                    text=key, variable=value.checkbox_var, style="TCheckbutton"
+                )
+                checkbox.grid(row=i, column=0, sticky="WENS")
+                description = value.description
+                if description is None:
+                    description = key
+                label = ttk.Label(catalogs_container, text=description)
+                label.grid(row=i, column=1, sticky="WENS")
+
+            # buttons for mass- (de-) selection
+            select_frame = ttk.Frame(catalogs_container)
+            select_frame.grid(column=0, row=i, columnspan=2, sticky="WENS", pady=2)
+            select_frame.grid_columnconfigure(0, weight=1)
+            ttk.Label(select_frame, text="Select: ").grid(row=0,column=0)
+            select_all_btn = ttk.Button(select_frame, text="All", command=self.select_all)
+            select_all_btn.grid(row=0, column=1, sticky="WENS")
+            select_none_btn = ttk.Button(select_frame, text="None", command=self.select_none)
+            select_none_btn.grid(row=0, column=2, sticky="WENS")
+            select_default_btn = ttk.Button(select_frame, text="Defaults", command=self.select_default)
+            select_default_btn.grid(row=0, column=3, sticky="WENS")
 
         # Separator
         sep2 = ttk.Separator(main_frame, orient='horizontal')
