@@ -2,10 +2,12 @@
 # AutoBGE for Siril - Ported from PyQt to Siril/tkinter
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 1.0.2
+# Version 1.0.3
 # 1.0.0 Initial release
 # 1.0.1 Clear rectangular selection after setting exclusion area
 # 1.0.2 Mono images remain mono after processing
+# 1.0.3 Fix copypasta error that meant RGB background couldn't be
+#       shown with the "Show Gradient Removed" button.
 
 """
 Auto Background Extraction script for Siril
@@ -55,7 +57,7 @@ from tkinter import ttk, messagebox
 from ttkthemes import ThemedTk
 from scipy.interpolate import Rbf
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 
 if not s.check_module_version(">=0.7.41"):
     print("Error: requires sirilpy version 0.7.41 or higher")
@@ -358,7 +360,7 @@ class GradientRemovalInterface:
         show_bg = self.show_gradient_var.get()
         if show_bg:
             with self.siril.image_lock():
-                output_image = self.gradient_background[0] if self.originally_mono else self.corrected_image
+                output_image = self.gradient_background[0] if self.originally_mono else self.gradient_background
                 self.siril.set_image_pixeldata(output_image)
         else:
             with self.siril.image_lock():
