@@ -2,12 +2,13 @@
 # AutoBGE for Siril - Ported from PyQt to Siril/tkinter
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 1.0.3
+# Version 1.0.4
 # 1.0.0 Initial release
 # 1.0.1 Clear rectangular selection after setting exclusion area
 # 1.0.2 Mono images remain mono after processing
 # 1.0.3 Fix copypasta error that meant RGB background couldn't be
 #       shown with the "Show Gradient Removed" button.
+# 1.0.4 Fix CLI mode so the script can be used with pyscript
 
 """
 Auto Background Extraction script for Siril
@@ -40,7 +41,10 @@ To use the script with pyscript, call it as:
 pyscript AutoBGE.py [-npoints] [-polydegree] [-rbfsmooth]
 
 Exclusion areas are not supported via the pyscript interface as
-they need to be set visually.
+they generally need to be set visually, however if you have a
+programmatic way of generating exclusion areas you can do so
+using SirilInterface.overlay_add_polygon() before calling this
+script with pyscript.
 """
 
 import sys
@@ -57,7 +61,7 @@ from tkinter import ttk, messagebox
 from ttkthemes import ThemedTk
 from scipy.interpolate import Rbf
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 
 if not s.check_module_version(">=0.7.41"):
     print("Error: requires sirilpy version 0.7.41 or higher")
@@ -66,6 +70,7 @@ if not s.check_module_version(">=0.7.41"):
 class GradientRemovalInterface:
     def __init__(self, siril: s.SirilInterface, root=None, cli_args=None):
         self.siril = siril
+        self.root = root
 
         self.cli_call = self.siril.is_cli()
         # If no CLI args, create a default namespace with defaults
@@ -82,15 +87,16 @@ class GradientRemovalInterface:
         if hasattr(cli_args, 'median'):
             cli_args.median = max(0.01, min(0.99, cli_args.median))
 
-        try:
-            self.siril.connect()
-        except s.SirilConnectionError:
-            if self.cli_call:
-                messagebox.showerror("Error", "Failed to connect to Siril")
-                self.close_dialog()
-            else:
-                print("Error: failed to connect to Siril", file=sys.stderr)
-            return
+        if not self.siril.connected:
+            try:
+                self.siril.connect()
+            except s.SirilConnectionError:
+                if self.cli_call:
+                    messagebox.showerror("Error", "Failed to connect to Siril")
+                    self.close_dialog()
+                else:
+                    print("Error: failed to connect to Siril", file=sys.stderr)
+                return
 
         try:
             self.siril.cmd("requires", "1.4.0-beta3")
@@ -106,9 +112,8 @@ class GradientRemovalInterface:
         self.num_sample_points = 100
         self.poly_degree = 2
         self.rbf_smooth = 0.1
-        self.rbf_smooth_var = tk.DoubleVar(value=self.rbf_smooth)
         self.show_gradient = False
-        
+
         # Polygons
         self.siril.overlay_clear_polygons()
         self.exclusion_polygons = []
@@ -143,10 +148,12 @@ class GradientRemovalInterface:
             self.poly_degree = self.cli_args.polydegree
             self.rbf_smooth = self.cli_args.rbfsmooth
             # Process the image
-            self.apply_changes()
+            self.siril.log(f"AutoBGE: processing image with {self.num_sample_points} "
+                           f"sample points, polynomial degree {self.poly_degree} and "
+                           f"RBF smoothness {self.rbf_smooth}")
+            self.process_image()
         elif root:
-            # Create the UI
-            self.root = root
+            # Store root for GUI mode
             self.root.attributes('-topmost', True)
             self.root.title(f"Automatic Background Extraction - v{VERSION}")
             self.root.resizable(False, False)
@@ -163,7 +170,8 @@ class GradientRemovalInterface:
             self.siril.disconnect()
         except Exception:
             pass
-        self.root.destroy()
+        if hasattr(self, 'root'):
+            self.root.destroy()
 
     def floor_value(self, value, decimals=2):
         """Floor a value to the specified number of decimal places"""
@@ -178,6 +186,9 @@ class GradientRemovalInterface:
         self.rbf_smooth_display_var.set(f"{rounded_value:.2f}")
 
     def create_widgets(self):
+        # Initialize GUI-specific variables here (after root window exists)
+        self.rbf_smooth_var = tk.DoubleVar(value=self.rbf_smooth)
+
         # Main frame
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -319,7 +330,7 @@ class GradientRemovalInterface:
             style="TButton"
         )
         self.close_button.pack(side=tk.RIGHT, padx=5)
- 
+
         self.process_button = ttk.Button(
             action_frame,
             text="Process",
@@ -375,12 +386,14 @@ class GradientRemovalInterface:
         """
 
         # Disable the process button to prevent multiple clicks
-        self.process_button.config(state='disabled')
-        self.process_button.update()
+        if self.root:
+            self.process_button.config(state='disabled')
+            self.process_button.update()
 
         # Stretch the image before processing
-        self.status_label.config(text="Normalizing image for processing...")
-        self.status_label.update_idletasks()
+        if self.root:
+            self.status_label.config(text="Normalizing image for processing...")
+            self.status_label.update_idletasks()
         stretched_image = self.stretch_image(self.image)
 
         # Check if the image is color
@@ -396,8 +409,9 @@ class GradientRemovalInterface:
             exclusion_mask = self.create_exclusion_mask(stretched_image.shape, self.exclusion_polygons)
 
         # ------------------ First Stage: Polynomial Gradient Removal ------------------
-        self.status_label.config(text="Step 1: Polynomial Gradient Removal")
-        self.status_label.update_idletasks()
+        if self.root:
+            self.status_label.config(text="Step 1: Polynomial Gradient Removal")
+            self.status_label.update_idletasks()
         # Downsample for polynomial background fitting
         small_image_poly = self.downsample_image(stretched_image, self.downsample_scale)
 
@@ -434,8 +448,9 @@ class GradientRemovalInterface:
         image_after_poly = np.clip(image_after_poly, 0, 1)
 
         # ------------------ Second Stage: RBF Gradient Removal ------------------
-        self.status_label.config(text="Step 2: RBF Gradient Removal")
-        self.status_label.update_idletasks()
+        if self.root:
+            self.status_label.config(text="Step 2: RBF Gradient Removal")
+            self.status_label.update_idletasks()
         # Downsample the image after polynomial removal for RBF fitting
         small_image_rbf = self.downsample_image(image_after_poly, self.downsample_scale)
 
@@ -472,8 +487,9 @@ class GradientRemovalInterface:
         corrected_image = np.clip(corrected_image, 0, 1)
 
         # Unstretch both the corrected image and the gradient background
-        self.status_label.config(text="De-Normalizing the processed images...")
-        self.status_label.update_idletasks()
+        if self.root:
+            self.status_label.config(text="De-Normalizing the processed images...")
+            self.status_label.update_idletasks()
         corrected_image = self.unstretch_image(corrected_image)
         total_background = poly_background + rbf_background
         gradient_background = self.unstretch_image(total_background)
@@ -499,12 +515,13 @@ class GradientRemovalInterface:
             output_image = self.corrected_image[0] if self.originally_mono else self.corrected_image
             self.siril.set_image_pixeldata(output_image)
 
-        self.show_gradient_checkbox.config(state='enabled')
-        self.show_gradient_checkbox.update()
-        self.process_button.config(state='enabled')
-        self.process_button.update()
-        self.status_label.config(text="Processing Complete")
-        self.status_label.update_idletasks()
+        if self.root:
+            self.show_gradient_checkbox.config(state='enabled')
+            self.show_gradient_checkbox.update()
+            self.process_button.config(state='enabled')
+            self.process_button.update()
+            self.status_label.config(text="Processing Complete")
+            self.status_label.update_idletasks()
         self.siril.clear_image_bgsamples()
 
     # ------------------ Helper Functions ------------------
