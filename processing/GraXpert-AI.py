@@ -43,7 +43,11 @@ Models licensed as CC-BY-NC-SA-4.0
 # 1.0.11 Increase timeout on GraXpert version check (required if run offline
 #        apparently) and move check to ModelManager __init__ so that there is
 #        no delay at startup
-# 1.1.0 For beta3+: use ONNXHelper.run(), remove special macOS handling
+# 1.1.0  For beta3+: use ONNXHelper.run(), remove special macOS handling
+#        Use CPU ExecutionProvider for BG extraction as this process is not
+#        computationally demanding and it causes errors with some EPs
+# 1.1.1  Better error messaging if the GraXpert executable isn't set or is
+#        invalid
 
 import os
 import re
@@ -96,7 +100,9 @@ _graxpert_version = None
 def get_executable(siril):
     if siril is None or not siril.connected:
         return None
-    return siril.get_siril_config('core', 'graxpert_path')
+    executable = siril.get_siril_config('core', 'graxpert_path')
+    print(executable)
+    return None if 'not set' in executable else executable
 
 def check_graxpert_version(executable):
     """
@@ -107,12 +113,12 @@ def check_graxpert_version(executable):
 
     # Check if executable is valid
     if not executable or not executable.strip():
-        return
+        return None
 
     # Check if the file exists and is executable
     if not os.path.isfile(executable) or not os.access(executable, os.X_OK):
         print("Error: cannot access or execute the GraXpert path", file=sys.stderr)
-        return
+        return None
 
     with _graxpert_mutex:
         try:
@@ -136,12 +142,12 @@ def check_graxpert_version(executable):
                 process.kill()
                 process.communicate()
                 print("GraXpert version check timed out")
-                return
+                return None
 
             # Check for errors
             if exit_status != 0:
                 print(f"Spawning GraXpert failed during version check: {stderr}")
-                return
+                return None
 
             # Process output to extract version
             output = stderr + stdout
@@ -165,11 +171,11 @@ def check_graxpert_version(executable):
                     global _graxpert_version
                     _graxpert_version = version_string
 
-            return
+            return version_string
 
         except Exception as e:
             print(f"Error checking GraXpert version: {str(e)}")
-            return
+            return None
 
 def get_available_local_operations():
     operations = {
@@ -188,6 +194,8 @@ def get_available_local_operations():
     return operations
 
 def get_available_operations():
+    if _graxpert_version is None:
+        return None
     version = Version(_graxpert_version)
     # If version check failed or version is less than 3.0.0, abort initialization
     operations = {
@@ -320,9 +328,17 @@ class GraXpertModelManager:
         self.siril = siril
         self.callback=callback
         self.models_by_operation = {}
+        self.initialized = False
 
         # Check GraXpert version and set up operations accordingly
-        check_graxpert_version(get_executable(siril))
+        graxpert_executable = get_executable(siril)
+        if graxpert_executable is None:
+            messagebox.showerror("GraXpert not found", "Please set the location of the GraXpert executable in Siril Preferences -> Miscellaneous")
+            return None
+        check_graxpert_version(graxpert_executable)
+        if _graxpert_version is None:
+            messagebox.showerror("Error checking GraXpert version", "Please check the location of the GraXpert executable in Siril Preferences -> Miscellaneous")
+            return None
         self.operations = get_available_operations()
 
         self.operation_cmd_map = {
@@ -331,6 +347,7 @@ class GraXpertModelManager:
             'deconvolution-stars': 'deconv-stellar',
             'deconvolution-object': 'deconv-obj'
         }
+        self.initialized = True
 
     def show_dialog(self):
         """Show the model manager dialog"""
@@ -2678,7 +2695,10 @@ class GUIInterface:
     def load_model_manager(self):
         if self.model_manager is None:
             self.model_manager = GraXpertModelManager(self.action_frame, self.siril, self.update_dropdowns)
-        self.model_manager.show_dialog()
+        if self.model_manager.initialized:
+            self.model_manager.show_dialog()
+        else:
+            self.model_manager = None
 
     def update_dropdowns(self):
         self._populate_model_dropdown()
