@@ -48,6 +48,8 @@ Models licensed as CC-BY-NC-SA-4.0
 #        computationally demanding and it causes errors with some EPs
 # 1.1.1  Better error messaging if the GraXpert executable isn't set or is
 #        invalid
+# 1.1.2  Update version string and add DLL preloading, which may improve
+#        situations where system NVIDIA libraries can't be found
 
 import os
 import re
@@ -89,7 +91,7 @@ import onnxruntime
 onnxruntime.preload_dlls()
 onnxruntime.set_default_logger_severity(4)
 
-VERSION = "1.0.11"
+VERSION = "1.1.2"
 DENOISE_CONFIG_FILENAME = "graxpert_denoise_model.conf"
 BGE_CONFIG_FILENAME = "graxpert_bge_model.conf"
 DECONVOLVE_STARS_CONFIG_FILENAME = "graxpert_deconv_stars_model.conf"
