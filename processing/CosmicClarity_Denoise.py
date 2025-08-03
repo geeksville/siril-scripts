@@ -1,11 +1,13 @@
 # (c) Adrian Knagg-Baugh 2024
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Version 1.0.4
+# Version 1.0.5
 # 1.0.1: AKB - convert "requires" to use exception handling
 # 1.0.2: Miscellaneous fixes
 # 1.0.3: Use tiffile instead of savetif32 to save the input file
 #        This avoids colour shifts if the image profile != the display profile
 # 1.0.4: Fix bug in 1.0.3 when processing mono images
+# 1.0.5: Fix bug in 1.0.4 when converting 32-to-16-bit
+#        Set "clear input directory" to default to True
 
 import sirilpy as s
 # Ensure dependencies are installed
@@ -25,7 +27,7 @@ from sirilpy import tksiril
 import numpy as np
 import tiffile
 
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 
 if s.check_module_version(">=0.6.0") and sys.platform.startswith("linux"):
     import sirilpy.tkfilebrowser as filedialog
@@ -94,7 +96,7 @@ class CosmicClarityInterface:
         mode_frame.pack(fill=tk.X, padx=5, pady=5)
 
         self.denoising_mode_var = tk.StringVar(value="Luminance")
-        denoising_modes = ["Luminance", "Full"]
+        denoising_modes = ["Luminance", "Full", "Separate"]
         for mode in denoising_modes:
             ttk.Radiobutton(
                 mode_frame,
@@ -117,7 +119,7 @@ class CosmicClarityInterface:
         ).pack(anchor=tk.W, pady=2)
 
         # Clear Input Directory Checkbox
-        self.clear_input_dir_var = tk.BooleanVar(value=False)
+        self.clear_input_dir_var = tk.BooleanVar(value=True)
         clear_input_check = ttk.Checkbutton(
             options_frame,
             text="Clear input directory",
@@ -126,9 +128,11 @@ class CosmicClarityInterface:
         )
         clear_input_check.pack(anchor=tk.W, pady=2)
         tksiril.create_tooltip(clear_input_check,
-            "Delete any TIFF files from the Cosmic Clarity input directory. "
-            "If not done, Cosmic Clarity will process all TIFF files in the input "
-            "directory, which will take longer and generate potentially unnecessary files.")
+            "Delete any files from the Cosmic Clarity input directory. "
+            "If not done, Cosmic Clarity will process all image files in the input "
+            "directory, which will take longer and generate potentially unnecessary files. "
+            "WARNING: set this to False if you wish to retain previous content of the "
+            "Cosmic Clarity input directory")
 
         # Denoise Strength
         strength_frame = ttk.Frame(options_frame)
@@ -297,15 +301,19 @@ class CosmicClarityInterface:
                 outputfilename = os.path.join(outputpath, f"{basename}_denoised.tif")
 
                 if clear_input:
-                    tiff_files = Path(inputpath).glob("*.tif*")
-                    for tiff_file in tiff_files:
+                    files = Path(inputpath).glob("*.*")
+                    for each_file in files:
                         try:
-                            tiff_file.unlink()
-                            print(f"Deleted: {tiff_file}")
+                            each_file.unlink()
+                            print(f"Deleted: {each_file}")
                         except Exception as e:
-                            print(f"Failed to delete {tiff_file}: {e}")
+                            print(f"Failed to delete {each_file}: {e}")
 
+                was_16bit = False
                 pixels = self.siril.get_image_pixeldata()
+                if pixels.dtype == np.uint16:
+                    pixels = pixels.astype(np.float32) / 65535.0
+                    was_16bit = True
 
                 # Determine photometric and reshape if needed
                 if pixels.ndim == 2:
@@ -340,8 +348,8 @@ class CosmicClarityInterface:
                         pixel_data = np.transpose(pixel_data, (2, 0, 1))
                         pixel_data = np.ascontiguousarray(pixel_data)
                     force_16bit = self.siril.get_siril_config("core", "force_16bit")
-                    if (force_16bit):
-                        pixel_data = np.rint(pixel_data * 65536).astype(np.uint16)
+                    if (was_16bit or force_16bit):
+                        pixel_data = np.rint(pixel_data * 65535.0).astype(np.uint16)
                     # Save original image for undo
                     self.siril.undo_save_state(f"Cosmic Clarity denoise ({mode}, str={denoise_strength})")
                     # Update Siril
