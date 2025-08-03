@@ -86,6 +86,7 @@ onnx_helper = s.ONNXHelper()
 onnx_helper.install_onnxruntime()
 
 import onnxruntime
+onnxruntime.preload_dlls()
 onnxruntime.set_default_logger_severity(4)
 
 VERSION = "1.0.11"

@@ -1,10 +1,13 @@
-# (c) Adrian Knagg-Baugh 2024
+# (c) Adrian Knagg-Baugh 2024-2025
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Version: 1.0.3
+# Version: 1.0.4
 # 1.0.1: convert "requires" to use exception handling
 # 1.0.2: misc updates
 # 1.0.3: Use tiffile instead of savetif32 to save the input file
 #        This avoids colour shifts if the image profile != the display profile
+# 1.0.4: Fix an error in 32-to-16-bit conversion; always save the input file as
+#        32-bit to ensure consistent input for CC; add support for PSF auto-
+#        detection and non-stellar amount
 
 import sirilpy as s
 s.ensure_installed("ttkthemes", "tiffile")
@@ -24,7 +27,7 @@ from sirilpy import tksiril
 import numpy as np
 import tiffile
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 
 if s.check_module_version(">=0.6.0") and sys.platform.startswith("linux"):
     import sirilpy.tkfilebrowser as filedialog
@@ -77,6 +80,12 @@ class SirilCosmicClarityInterface:
         rounded_value = self.floor_value(value)
         self.stellar_amount_var.set(f"{rounded_value:.2f}")
 
+    def update_non_stellar_amount_display(self, *args):
+        """Update the displayed target median value with floor rounding"""
+        value = self.non_stellar_amount_var.get()
+        rounded_value = self.floor_value(value)
+        self.non_stellar_amount_var.set(f"{rounded_value:.2f}")
+
     def update_non_stellar_strength_display(self, *args):
         """Update the displayed target median value with floor rounding"""
         value = self.non_stellar_strength_var.get()
@@ -124,7 +133,7 @@ class SirilCosmicClarityInterface:
         ).pack(anchor=tk.W, pady=2)
 
         # Clear Input Directory Checkbox
-        self.clear_input_dir_var = tk.BooleanVar(value=False)
+        self.clear_input_dir_var = tk.BooleanVar(value=True)
         clear_input_check = ttk.Checkbutton(
             options_frame,
             text="Clear input directory",
@@ -135,7 +144,36 @@ class SirilCosmicClarityInterface:
         tksiril.create_tooltip(clear_input_check,
             "Delete any TIFF files from the Cosmic Clarity input directory. "
             "If not done, Cosmic Clarity will process all TIFF files in the input "
-            "directory, which will take longer and generate potentially unnecessary files.")
+            "directory, which will take longer and generate potentially unnecessary files. "
+            "WARNING: set this to False if you wish to retain previous content of the "
+            "Cosmic Clarity input directory")
+
+        # PSF Autodetection Checkbox
+        self.auto_psf_var = tk.BooleanVar(value=True)
+        auto_psf_check = ttk.Checkbutton(
+            options_frame,
+            text="Autodetect PSF",
+            variable=self.auto_psf_var,
+            style="TCheckbutton"
+        )
+        auto_psf_check.pack(anchor=tk.W, pady=2)
+        tksiril.create_tooltip(auto_psf_check,
+            "Automatically measure PSF per chunk and use the two nearest radius models. WARNING: "
+            "this option requires at least CosmicClarity Sharpen v6.5. Setting the option with an "
+            "older version will result in an error.")
+
+## Separate channels functionality is problematic in some modes at present, so is disabled until more stable
+        # Separate Channels Checkbox
+        self.separate_channels_var = tk.BooleanVar(value=False)
+#        separate_channels_check = ttk.Checkbutton(
+#            options_frame,
+#            text="Sharpen Channels Separately",
+#            variable=self.separate_channels_var,
+#            style="TCheckbutton"
+#        )
+#        separate_channels_check.pack(anchor=tk.W, pady=2)
+#        tksiril.create_tooltip(separate_channels_check,
+#            "Sharpen channels separately")
 
         # Stellar Amount
         stellar_amount_frame = ttk.Frame(options_frame)
@@ -161,6 +199,30 @@ class SirilCosmicClarityInterface:
         # Add trace to update display when slider changes
         self.stellar_amount_var.trace_add("write", self.update_stellar_amount_display)
 
+        # Non-stellar Amount
+        non_stellar_amount_frame = ttk.Frame(options_frame)
+        non_stellar_amount_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(non_stellar_amount_frame, text="Non-Stellar Amount:").pack(side=tk.LEFT)
+        self.non_stellar_amount_var = tk.DoubleVar(value=0.5)
+        non_stellar_amount_scale = ttk.Scale(
+            non_stellar_amount_frame,
+            from_=0.0,
+            to=1.0,
+            orient=tk.HORIZONTAL,
+            variable=self.non_stellar_amount_var,
+            length=200
+        )
+        non_stellar_amount_scale.pack(side=tk.LEFT, padx=10, expand=True)
+        ttk.Label(
+            non_stellar_amount_frame,
+            textvariable=self.non_stellar_amount_var,
+            width=5
+        ).pack(side=tk.LEFT)
+
+        # Add trace to update display when slider changes
+        self.non_stellar_amount_var.trace_add("write", self.update_non_stellar_amount_display)
+
         # Non-Stellar Strength
         non_stellar_strength_frame = ttk.Frame(options_frame)
         non_stellar_strength_frame.pack(fill=tk.X, pady=5)
@@ -170,7 +232,7 @@ class SirilCosmicClarityInterface:
         non_stellar_strength_scale = ttk.Scale(
             non_stellar_strength_frame,
             from_=1,
-            to=5,
+            to=8,
             orient=tk.HORIZONTAL,
             variable=self.non_stellar_strength_var,
             length=200
@@ -243,18 +305,25 @@ class SirilCosmicClarityInterface:
         self.root.quit()
         self.root.destroy()
 
-    async def run_cosmic_clarity(self, executable_path, mode, stellar_amount, non_stellar_strength):
+    async def run_cosmic_clarity(self, executable_path, mode, stellar_amount, non_stellar_strength, non_stellar_amount):
         # (Keep the existing implementation)
         try:
             command = [
                 executable_path,
                 f"--sharpening_mode={mode}",
                 f"--stellar_amount={stellar_amount}",
-                f"--nonstellar_strength={non_stellar_strength}"
+                f"--nonstellar_strength={non_stellar_strength}",
+                f"--nonstellar_amount={non_stellar_amount}"
             ]
 
             if not self.use_gpu_var.get():
                 command.append("--disable_gpu")
+
+            if self.auto_psf_var.get():
+                command.append("--auto_detect_psf")
+
+            if self.separate_channels_var.get():
+                command.append("--sharpen_channels_separately")
 
             process = await asyncio.create_subprocess_exec(
                 *command,
@@ -307,6 +376,7 @@ class SirilCosmicClarityInterface:
                 mode = self.sharpening_mode_var.get()
                 stellar_amount = self.stellar_amount_var.get()
                 non_stellar_strength = self.non_stellar_strength_var.get()
+                non_stellar_amount = self.non_stellar_amount_var.get()
                 executable_path = self.executable_path_var.get()
                 clear_input = self.clear_input_dir_var.get()
 
@@ -340,7 +410,11 @@ class SirilCosmicClarityInterface:
                         except Exception as e:
                             print(f"Failed to delete {tiff_file}: {e}")
 
+                was_16bit = False
                 pixels = self.siril.get_image_pixeldata()
+                if pixels.dtype == np.uint16:
+                    pixels = pixels.astype(np.float32) / 65535.0
+                    was_16bit = True
 
                 # Determine photometric and reshape if needed
                 if pixels.ndim == 2:
@@ -356,14 +430,16 @@ class SirilCosmicClarityInterface:
                 # Write TIFF without ICC profile
                 tiffile.imwrite(inputfilename, pixels, photometric=photometry, planarconfig='contig')
 
-                print(f"Running sharpening with mode: {mode}, stellar_amount: {stellar_amount}, non_stellar_strength: {non_stellar_strength}")
+                print(f"Running sharpening with mode: {mode}, stellar_amount: {stellar_amount}, non_stellar_strength: {non_stellar_strength}, "
+                      f"non_stellar_amount: {non_stellar_amount}")
                 self.siril.update_progress("Seti Astro Cosmic Clarity Sharpen starting...", 0)
 
                 success = await self.run_cosmic_clarity(
                     executable_path,
                     mode,
                     stellar_amount,
-                    non_stellar_strength
+                    non_stellar_strength,
+                    non_stellar_amount
                 )
 
                 if success:
@@ -379,8 +455,8 @@ class SirilCosmicClarityInterface:
                         pixel_data = np.ascontiguousarray(pixel_data)
                     #pixel_data = pixel_data[:, ::-1, :]
                     force_16bit = self.siril.get_siril_config("core", "force_16bit")
-                    if (force_16bit):
-                        pixel_data = np.rint(pixel_data * 65536).astype(np.uint16)
+                    if (was_16bit or force_16bit):
+                        pixel_data = np.rint(pixel_data * 65535).astype(np.uint16)
                     # Save original image for undo
                     self.siril.undo_save_state(f"Cosmic Clarity sharpen ({mode})")
                     # Update Siril
@@ -403,7 +479,7 @@ class SirilCosmicClarityInterface:
                 if os.path.isfile(executable_path) and os.access(executable_path, os.X_OK):
                     return executable_path
 
-        messagebox.showinfo("Configuration", "Executable not yet configured. Recommended to use Seti Astro Cosmic Clarity v5.4 or higher.")
+        messagebox.showinfo("Configuration", "Executable not yet configured. It is recommended to use Seti Astro Cosmic Clarity v6.5 or higher.")
         return None
 
 def main():
