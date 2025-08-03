@@ -7,7 +7,7 @@
 #        This avoids colour shifts if the image profile != the display profile
 # 1.0.4: Fix an error in 32-to-16-bit conversion; always save the input file as
 #        32-bit to ensure consistent input for CC; add support for PSF auto-
-#        detection and non-stellar amount
+#        detection and non-stellar amount; clear the input directory by default
 
 import sirilpy as s
 s.ensure_installed("ttkthemes", "tiffile")
@@ -142,8 +142,8 @@ class SirilCosmicClarityInterface:
         )
         clear_input_check.pack(anchor=tk.W, pady=2)
         tksiril.create_tooltip(clear_input_check,
-            "Delete any TIFF files from the Cosmic Clarity input directory. "
-            "If not done, Cosmic Clarity will process all TIFF files in the input "
+            "Delete any files from the Cosmic Clarity input directory. "
+            "If not done, Cosmic Clarity will process all image files in the input "
             "directory, which will take longer and generate potentially unnecessary files. "
             "WARNING: set this to False if you wish to retain previous content of the "
             "Cosmic Clarity input directory")
@@ -402,13 +402,13 @@ class SirilCosmicClarityInterface:
                 outputfilename = os.path.join(outputpath, f"{basename}_sharpened.tif")
 
                 if clear_input:
-                    tiff_files = Path(inputpath).glob("*.tif*")
-                    for tiff_file in tiff_files:
+                    files = Path(inputpath).glob("*.*")
+                    for each_file in files:
                         try:
-                            tiff_file.unlink()
-                            print(f"Deleted: {tiff_file}")
+                            each_file.unlink()
+                            print(f"Deleted: {each_file}")
                         except Exception as e:
-                            print(f"Failed to delete {tiff_file}: {e}")
+                            print(f"Failed to delete {each_file}: {e}")
 
                 was_16bit = False
                 pixels = self.siril.get_image_pixeldata()
