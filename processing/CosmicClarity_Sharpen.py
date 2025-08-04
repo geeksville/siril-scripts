@@ -1,6 +1,6 @@
 # (c) Adrian Knagg-Baugh 2024-2025
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Version: 1.0.4
+# Version: 1.0.5
 # 1.0.1: convert "requires" to use exception handling
 # 1.0.2: misc updates
 # 1.0.3: Use tiffile instead of savetif32 to save the input file
@@ -8,6 +8,7 @@
 # 1.0.4: Fix an error in 32-to-16-bit conversion; always save the input file as
 #        32-bit to ensure consistent input for CC; add support for PSF auto-
 #        detection and non-stellar amount; clear the input directory by default
+# 1.0.5: DOn't print empty lines of CC output to the log
 
 import sirilpy as s
 s.ensure_installed("ttkthemes", "tiffile")
@@ -27,7 +28,7 @@ from sirilpy import tksiril
 import numpy as np
 import tiffile
 
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 
 if s.check_module_version(">=0.6.0") and sys.platform.startswith("linux"):
     import sirilpy.tkfilebrowser as filedialog
@@ -347,7 +348,9 @@ class SirilCosmicClarityInterface:
                         message = "Seti Astro Cosmic Clarity Sharpen progress..."
                         self.siril.update_progress(message, percentage / 100)
                     else:
-                        print(line.strip())
+                        tmp = line.strip()
+                        if tmp != "":
+                            print(tmp)
 
                 buffer = lines[-1]
 
