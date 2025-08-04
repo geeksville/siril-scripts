@@ -1,6 +1,29 @@
-# (c) Carlo Mollicone - AstroBOH, 2025
+#
+# ***********************************************
+#
+# Copyright (C) 2025 - Carlo Mollicone - AstroBOH
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
+# The author of this script is Carlo Mollicone (CarCarlo147) and can be reached at:
+# https://www.astroboh.it
+# https://www.facebook.com/carlo.mollicone.9
+#
+# ***********************************************
+#
+# --------------------------------------------------------------------------------------------------
+# This program is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the Free Software Foundation,
+# either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+# --------------------------------------------------------------------------------------------------
+#
+# Description:
 # This script for Siril creates a simple graphical user interface (GUI)
 # to delete image sequences and their related files.
 #
@@ -15,8 +38,10 @@
 # 1.0.1 Minor fix: adjusted GUI layout
 # 1.0.2 Minor fix: Center window on open
 # 1.0.3 Added support for variable FITS sequences (SEQ_VARIABLE = FITSEQ, AVI or SER files) and regular FITS sequences (SEQ_REGULAR)
+# 1.0.4 Added contact information
+#
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 
 # Core module imports
 import os
@@ -93,7 +118,7 @@ class SequenceDeleterApp:
     """
     def __init__(self, root):
         self.root = root
-        self.root.title(f"Delete Siril Sequence - By CM AstroBOH v{VERSION}")
+        self.root.title(f"Sequences Deleter Tool v{VERSION} - (c) Carlo Mollicone AstroBOH")
 
         #setting window size And Center the window
         width=450

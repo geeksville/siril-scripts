@@ -1,6 +1,29 @@
-# (c) Carlo Mollicone - AstroBOH, 2025
+#
+# ***********************************************
+#
+# Copyright (C) 2025 - Carlo Mollicone - AstroBOH
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
+# The author of this script is Carlo Mollicone (CarCarlo147) and can be reached at:
+# https://www.astroboh.it
+# https://www.facebook.com/carlo.mollicone.9
+#
+# ***********************************************
+#
+# --------------------------------------------------------------------------------------------------
+# This program is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the Free Software Foundation,
+# either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+# --------------------------------------------------------------------------------------------------
+#
+# Description:
 # This Python script allows you to create different "Hubble-like" palettes from your OSC (One-Shot Color) images
 # acquired with a dual-band Ha/OIII filter, all through a convenient graphical interface in Siril.
 #
@@ -30,9 +53,10 @@
 #       Fixed handling of custom formulas in the GUI
 # 1.1.7 Added more pixelmath formulas for S2 and OIII
 #       Minor fix 
+# 1.1.8 Added contact information
 #
 
-VERSION = "1.1.7"
+VERSION = "1.1.8"
 CONFIG_FILENAME = "Hubble-Palette-from-Dual-Band-OSC.conf"
 
 # Core module imports
@@ -122,7 +146,7 @@ class HubblePaletteApp:
     """
     def __init__(self, root):
         self.root = root
-        self.root.title(f"'Hubble-like' palettes from your OSC - By CM AstroBOH v{VERSION}")
+        self.root.title(f"'Hubble-like' palettes from your OSC v{VERSION} - (c) Carlo Mollicone AstroBOH")
 
         #setting window size And Center the window
         width=850
