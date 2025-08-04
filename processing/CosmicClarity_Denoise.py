@@ -1,6 +1,6 @@
 # (c) Adrian Knagg-Baugh 2024
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Version 1.0.5
+# Version 1.0.6
 # 1.0.1: AKB - convert "requires" to use exception handling
 # 1.0.2: Miscellaneous fixes
 # 1.0.3: Use tiffile instead of savetif32 to save the input file
@@ -8,6 +8,7 @@
 # 1.0.4: Fix bug in 1.0.3 when processing mono images
 # 1.0.5: Fix bug in 1.0.4 when converting 32-to-16-bit
 #        Set "clear input directory" to default to True
+# 1.0.6: Don't print empty lines to the log
 
 import sirilpy as s
 # Ensure dependencies are installed
@@ -27,7 +28,7 @@ from sirilpy import tksiril
 import numpy as np
 import tiffile
 
-VERSION = "1.0.5"
+VERSION = "1.0.6"
 
 if s.check_module_version(">=0.6.0") and sys.platform.startswith("linux"):
     import sirilpy.tkfilebrowser as filedialog
@@ -256,7 +257,9 @@ class CosmicClarityInterface:
                         percentage = float(match.group(1))
                         self.siril.update_progress("Seti Astro Cosmic Clarity Denoise progress...", percentage / 100)
                     else:
-                        print(line.strip())
+                        tmp = line.strip()
+                        if tmp != "":
+                            print(tmp)
                 buffer = lines[-1]
 
             await process.wait()
