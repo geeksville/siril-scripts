@@ -3,10 +3,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # Contact: enderbybear@foxmail.com
-# Version: 1.0.0
+# Version: 1.0.1
 
 # Release notes:
-# 1.0.0: initial release
+# 1.0.0: initial
+# 1.0.1: don't print empty lines to the log (AKB)
 
 import sirilpy as s
 s.ensure_installed("ttkthemes")
@@ -24,7 +25,7 @@ from tkinter import ttk, messagebox
 from ttkthemes import ThemedTk
 from sirilpy import tksiril
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 if s.check_module_version(">=0.6.0") and sys.platform.startswith("linux"):
     import sirilpy.tkfilebrowser as filedialog
@@ -217,7 +218,9 @@ class SirilCosmicClarityInterface:
                         message = "Seti Astro Cosmic Clarity Superres progress..."
                         self.siril.update_progress(message, percentage / 100)
                     else:
-                        print(line.strip())
+                        tmp = line.strip()
+                        if tmp != "":
+                            print(tmp)
 
                 buffer = lines[-1]
 
