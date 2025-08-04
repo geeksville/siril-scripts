@@ -1,5 +1,27 @@
-# (c) Carlo Mollicone - AstroBOH (2025)
+#
+# ***********************************************
+#
+# Copyright (C) 2025 - Carlo Mollicone - AstroBOH
 # SPDX-License-Identifier: GPL-3.0-or-later
+#
+# The author of this script is Carlo Mollicone (CarCarlo147) and can be reached at:
+# https://www.astroboh.it
+# https://www.facebook.com/carlo.mollicone.9
+#
+# ***********************************************
+#
+# --------------------------------------------------------------------------------------------------
+# This program is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the Free Software Foundation,
+# either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+# --------------------------------------------------------------------------------------------------
 #
 # Description:
 # This Siril script provides an interface to remove satellite trails
@@ -44,10 +66,10 @@
 # 0.2.2 - Converting instructions to labels for a smoother GUI.
 #         Update the instructions. Clearer and more complete.
 # 1.0.0 - Better filedialog for Linux
-#
+# 1.0.1 - Added contact information
 #
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 # --- Core Imports ---
 import sys
