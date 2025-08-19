@@ -1,5 +1,27 @@
-# (c) Carlo Mollicone - AstroBOH (2025)
+#
+# ***********************************************
+#
+# Copyright (C) 2025 - Carlo Mollicone - AstroBOH
 # SPDX-License-Identifier: GPL-3.0-or-later
+#
+# The author of this script is Carlo Mollicone (CarCarlo147) and can be reached at:
+# https://www.astroboh.it
+# https://www.facebook.com/carlo.mollicone.9
+#
+# ***********************************************
+#
+# --------------------------------------------------------------------------------------------------
+# This program is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the Free Software Foundation,
+# either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+# --------------------------------------------------------------------------------------------------
 #
 # Description:
 # This script allows you to insert a signature/logo (PNG file with transparency) onto the current image in Siril.
@@ -10,17 +32,18 @@
 # 1.0.1 Add undo_save_state
 #       Add handling of files with different bit depths
 # 1.0.2 Missing ensure_installed components
-#       
+# 1.0.3 Better filedialog for Linux
+# 1.0.4 Added contact information
+#
 
-
-VERSION = "1.0.2"
+VERSION = "1.0.4"
 CONFIG_FILENAME = "SignatureTool.conf"
 
 # --- Core Imports ---
 import sys
 import os
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, simpledialog
+from tkinter import ttk, messagebox, simpledialog
 import configparser
 
 # Attempt to import sirilpy. If not running inside Siril, the import will fail.
@@ -35,6 +58,12 @@ try:
         sys.exit(1)
 
     SIRIL_ENV = True
+
+    # Better filedialog for Linux
+    if s.check_module_version(">=0.6.0") and sys.platform.startswith("linux"):
+        import sirilpy.tkfilebrowser as filedialog
+    else:
+        from tkinter import filedialog
 
     # Import Siril GUI related components
     from sirilpy import tksiril, SirilError
@@ -54,7 +83,7 @@ except ImportError:
 class SignatureApp:
     def __init__(self, root):
         self.root = root
-        self.root.title(f"AstroBOH Signature Tool v{VERSION} - (c) Carlo Mollicone")
+        self.root.title(f"Signature Tool v{VERSION} - (c) Carlo Mollicone AstroBOH")
         
         # --- Siril Connection ---
         # Initialize Siril connection
