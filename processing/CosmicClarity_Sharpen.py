@@ -9,6 +9,8 @@
 #        32-bit to ensure consistent input for CC; add support for PSF auto-
 #        detection and non-stellar amount; clear the input directory by default
 # 1.0.5: DOn't print empty lines of CC output to the log
+# 1.0.6: Implement available option checking so the auto PSF widget is not
+#        available if that option is not supported
 
 import sirilpy as s
 s.ensure_installed("ttkthemes", "tiffile")
@@ -20,6 +22,7 @@ import math
 import asyncio
 import subprocess
 from pathlib import Path
+from typing import List, Optional
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -28,7 +31,7 @@ from sirilpy import tksiril
 import numpy as np
 import tiffile
 
-VERSION = "1.0.5"
+VERSION = "1.0.6"
 
 if s.check_module_version(">=0.6.0") and sys.platform.startswith("linux"):
     import sirilpy.tkfilebrowser as filedialog
@@ -69,6 +72,83 @@ class SirilCosmicClarityInterface:
 
         # Create widgets
         self.create_widgets()
+
+    def get_command_options(self, command_path: str, nonsense_arg: str = "--nonsense") -> List[str]:
+        """
+        Execute a command with a nonsense argument to trigger usage output,
+        then parse the output to extract supported command-line options.
+
+        Args:
+            command_path: Path to the command executable
+            nonsense_arg: Nonsense argument to trigger usage output (default: "--nonsense")
+
+        Returns:
+            List of option names (without leading dashes)
+
+        Raises:
+            subprocess.SubprocessError: If the command fails to execute
+            ValueError: If no usage information could be parsed
+        """
+        try:
+            # Run the command with a nonsense argument to get usage info
+            result = subprocess.run(
+                [command_path, nonsense_arg],
+                capture_output=True,
+                text=True,
+                timeout=30  # Prevent hanging
+            )
+
+            # Usage info might be in stdout or stderr
+            output = result.stdout + result.stderr
+
+            if not output:
+                raise ValueError(f"No output received from {command_path}")
+
+            # Extract options from the usage output
+            options = []
+
+            # Pattern to match options like [-h], [--option], [--option VALUE], etc.
+            # This captures both short (-h) and long (--option) options
+            option_patterns = [
+                r'\[(-[a-zA-Z])\]',  # Short options like [-h]
+                r'\[(--[a-zA-Z_][a-zA-Z0-9_-]*)',  # Long options like [--option]
+                r'(--[a-zA-Z_][a-zA-Z0-9_-]*)\s+[A-Z_]+',  # Options with arguments like --option ARGUMENT
+                r'(--[a-zA-Z_][a-zA-Z0-9_-]*)\s+\{[^}]+\}',  # Options with choices like --option {choice1,choice2}
+            ]
+
+            for pattern in option_patterns:
+                matches = re.findall(pattern, output)
+                for match in matches:
+                    # Remove leading dashes and add to options list
+                    option = match.lstrip('-')
+                    if option and option not in options:
+                        options.append(option)
+
+            # Also look for standalone options mentioned in the usage line
+            # Pattern to find options in usage format like "[-h] [--option]"
+            usage_line_pattern = r'\[(-{1,2}[a-zA-Z_][a-zA-Z0-9_-]*)'
+            usage_matches = re.findall(usage_line_pattern, output)
+
+            for match in usage_matches:
+                option = match.lstrip('-')
+                if option and option not in options:
+                    options.append(option)
+
+            if not options:
+                raise ValueError(f"Could not parse any options from output: {output}")
+
+            return sorted(options)  # Return sorted for consistent ordering
+
+        except subprocess.TimeoutExpired:
+            raise subprocess.SubprocessError(f"Command {command_path} timed out")
+        except subprocess.CalledProcessError as e:
+            # This is actually expected - the command should fail with unrecognized argument
+            # But we still want to capture the output
+            output = e.stdout + e.stderr if hasattr(e, 'stdout') else ""
+            if not output:
+                raise subprocess.SubprocessError(f"Command failed and produced no output: {e}")
+        except FileNotFoundError:
+            raise subprocess.SubprocessError(f"Command not found: {command_path}")
 
     def floor_value(self, value, decimals=2):
         """Floor a value to the specified number of decimal places"""
@@ -159,9 +239,9 @@ class SirilCosmicClarityInterface:
         )
         auto_psf_check.pack(anchor=tk.W, pady=2)
         tksiril.create_tooltip(auto_psf_check,
-            "Automatically measure PSF per chunk and use the two nearest radius models. WARNING: "
-            "this option requires at least CosmicClarity Sharpen v6.5. Setting the option with an "
-            "older version will result in an error.")
+            "Automatically measure PSF per chunk and use the two nearest radius models. "
+            "NOTE: this option requires at least CosmicClarity Sharpen v6.5. It will be "
+            "disabled if not supported.")
 
 ## Separate channels functionality is problematic in some modes at present, so is disabled until more stable
         # Separate Channels Checkbox
@@ -260,6 +340,14 @@ class SirilCosmicClarityInterface:
         )
         exec_entry.pack(side=tk.LEFT, padx=(0, 5), expand=True)
 
+        if self.executable_path_var != "":
+            self.command_options = self.get_command_options(self.executable_path_var.get())
+            if not "auto_detect_psf" in self.command_options:
+                self.auto_psf_var.set(False)
+                auto_psf_check.config(state='disabled')
+        else:
+            self.command_options = None
+
         ttk.Button(
             exec_frame,
             text="Browse",
@@ -294,6 +382,9 @@ class SirilCosmicClarityInterface:
         )
         if filename:
             self.executable_path_var.set(filename)
+            self.command_options = self.get_command_options(self.executable_path_var)
+            autopsf_available = "normal" if "auto_detect_psf" in self.command_options else "disabled"
+            self.auto_psf_check.config(state=autopsf_available)
 
     def _on_apply(self):
         # Wrap the async method to run in the event loop
