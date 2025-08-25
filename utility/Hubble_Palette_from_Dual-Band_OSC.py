@@ -54,9 +54,11 @@
 # 1.1.7 Added more pixelmath formulas for S2 and OIII
 #       Minor fix 
 # 1.1.8 Added contact information
+# 1.1.9 Minor fix
+#
 #
 
-VERSION = "1.1.8"
+VERSION = "1.1.9"
 CONFIG_FILENAME = "Hubble-Palette-from-Dual-Band-OSC.conf"
 
 # Core module imports
@@ -260,7 +262,7 @@ class HubblePaletteApp:
         left_frame = ttk.Frame(main_frame)
         left_frame.pack(side="left", padx=5, pady=5, fill="both", expand=True)
 
-        middle_frame = ttk.Frame(main_frame, width=300)
+        middle_frame = ttk.Frame(main_frame, width=330)
         middle_frame.pack(side="left", padx=5, pady=5, fill="y")
         middle_frame.pack_propagate(False)
 
@@ -304,7 +306,7 @@ class HubblePaletteApp:
             "   - Then the following formulas are applied to create:\n"
             "       Ha, Oiii, and S2\n"
         )
-        instructions_step1 = ttk.Label(Frame_step1, text=instructions_step1, wraplength=220, justify="left", font=("TkDefaultFont", 9))
+        instructions_step1 = ttk.Label(Frame_step1, text=instructions_step1, wraplength=290, justify="left", font=("TkDefaultFont", 9))
         instructions_step1.pack(fill="both", expand=True, pady=(0, 10))
 
         label_PixelMath = ttk.Label(middle_frame, text="PixelMath Formula:")
@@ -335,7 +337,7 @@ class HubblePaletteApp:
         self.oiii_formula_entry.pack(anchor="w", fill="x")
 
         custom_buttons_frame = ttk.Frame(middle_frame)
-        custom_buttons_frame.pack(pady=20)
+        custom_buttons_frame.pack(anchor="center", expand=True, pady=5)
         
         self.load_button = ttk.Button(custom_buttons_frame, text="Load Custom Formulas", command=self.load_custom_formulas_from_file)
         self.load_button.pack(side="left", padx=5)
@@ -356,7 +358,7 @@ class HubblePaletteApp:
             "This is the final step:\n\n"
             "H - O - S files will be combined in the following ways\n"
         )
-        instructions_step2 = ttk.Label(Frame_step2, text=instructions_step2, wraplength=220, justify="left", font=("TkDefaultFont", 9))
+        instructions_step2 = ttk.Label(Frame_step2, text=instructions_step2, wraplength=200, justify="left", font=("TkDefaultFont", 9))
         instructions_step2.pack(fill="both", expand=True, pady=(0, 10))
 
 
