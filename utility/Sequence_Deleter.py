@@ -39,9 +39,11 @@
 # 1.0.2 Minor fix: Center window on open
 # 1.0.3 Added support for variable FITS sequences (SEQ_VARIABLE = FITSEQ, AVI or SER files) and regular FITS sequences (SEQ_REGULAR)
 # 1.0.4 Added contact information
+# 1.0.5 Improved detection of working directory
+#
 #
 
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 
 # Core module imports
 import os
@@ -191,7 +193,12 @@ class SequenceDeleterApp:
         # If the script is in Siril, the CWD is already set correctly.
         # Otherwise, for testing, use the script's folder.
         if SIRIL_ENV:
-            return os.getcwd()
+            # If the script is running within the Siril environment (SIRIL_ENV is true),
+            # then the working directory of the Python process (os.getcwd()) is the same as that of Siril.
+            # While this is true in most cases, it is not guaranteed.
+            # There may be situations where the two directories are out of sync, leading to difficult-to-diagnose errors.
+            # return os.getcwd()
+            return self.siril.get_siril_wd()
         else:
             return os.path.dirname(os.path.abspath(__file__))
 
