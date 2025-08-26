@@ -1,6 +1,6 @@
 # (c) Adrian Knagg-Baugh 2024-2025
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Version: 1.0.5
+# Version: 1.0.7
 # 1.0.1: convert "requires" to use exception handling
 # 1.0.2: misc updates
 # 1.0.3: Use tiffile instead of savetif32 to save the input file
@@ -11,6 +11,7 @@
 # 1.0.5: DOn't print empty lines of CC output to the log
 # 1.0.6: Implement available option checking so the auto PSF widget is not
 #        available if that option is not supported
+# 1.0.7: Fix an error that occurred if the config file was missing
 
 import sirilpy as s
 s.ensure_installed("ttkthemes", "tiffile")
@@ -31,7 +32,7 @@ from sirilpy import tksiril
 import numpy as np
 import tiffile
 
-VERSION = "1.0.6"
+VERSION = "1.0.7"
 
 if s.check_module_version(">=0.6.0") and sys.platform.startswith("linux"):
     import sirilpy.tkfilebrowser as filedialog
@@ -340,13 +341,22 @@ class SirilCosmicClarityInterface:
         )
         exec_entry.pack(side=tk.LEFT, padx=(0, 5), expand=True)
 
-        if self.executable_path_var != "":
-            self.command_options = self.get_command_options(self.executable_path_var.get())
-            if not "auto_detect_psf" in self.command_options:
+        # FIXED: Check if executable path is not empty AND not None before trying to get command options
+        if self.config_executable and self.config_executable.strip():
+            try:
+                self.command_options = self.get_command_options(self.config_executable)
+                if "auto_detect_psf" not in self.command_options:
+                    self.auto_psf_var.set(False)
+                    auto_psf_check.config(state='disabled')
+            except (subprocess.SubprocessError, ValueError) as e:
+                print(f"Warning: Could not get command options for {self.config_executable}: {e}")
+                self.command_options = []
                 self.auto_psf_var.set(False)
                 auto_psf_check.config(state='disabled')
         else:
-            self.command_options = None
+            self.command_options = []
+            self.auto_psf_var.set(False)
+            auto_psf_check.config(state='disabled')
 
         ttk.Button(
             exec_frame,
@@ -382,9 +392,23 @@ class SirilCosmicClarityInterface:
         )
         if filename:
             self.executable_path_var.set(filename)
-            self.command_options = self.get_command_options(self.executable_path_var)
-            autopsf_available = "normal" if "auto_detect_psf" in self.command_options else "disabled"
-            self.auto_psf_check.config(state=autopsf_available)
+            try:
+                self.command_options = self.get_command_options(filename)
+                autopsf_available = "normal" if "auto_detect_psf" in self.command_options else "disabled"
+            except (subprocess.SubprocessError, ValueError) as e:
+                print(f"Warning: Could not get command options for {filename}: {e}")
+                self.command_options = []
+                autopsf_available = "disabled"
+
+            # Find the auto PSF checkbox and update its state
+            for child in self.root.winfo_children():
+                if isinstance(child, ttk.Frame):
+                    for grandchild in child.winfo_children():
+                        if isinstance(grandchild, ttk.LabelFrame) and "Options" in str(grandchild.cget('text')):
+                            for widget in grandchild.winfo_children():
+                                if isinstance(widget, ttk.Checkbutton) and "Autodetect PSF" in str(widget.cget('text')):
+                                    widget.config(state=autopsf_available)
+                                    break
 
     def _on_apply(self):
         # Wrap the async method to run in the event loop
@@ -480,7 +504,6 @@ class SirilCosmicClarityInterface:
                     with open(config_file_path, 'w') as file:
                         file.write(f"{executable_path}\n")
 
-                # Rest of the implementation remains the same as in the original script
                 filename = self.siril.get_image_filename()
                 directory = os.path.dirname(executable_path)
                 basename = os.path.basename(filename)
