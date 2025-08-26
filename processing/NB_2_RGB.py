@@ -2,7 +2,7 @@
 # NBtoRGBstars for Siril - Ported from PyQt to Siril/tkinter
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 1.0.2
+# Version 1.0.4
 #
 
 import sirilpy as s
@@ -26,10 +26,11 @@ else:
     from tkinter import filedialog
     filetypes = [("FITS files", "*.fits *.fit *.fts")]
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 # 1.0.1 CR: using tkfilebrowser for linux OS
 # 1.0.2 CR: fixing script due to API changes
 # 1.0.3 CM: remove unnecessary import
+# 1.0.4 CR: fixing flipping issue
 
 class NBtoRGBstarsInterface:
     def __init__(self, root):
@@ -405,9 +406,6 @@ class NBtoRGBstarsInterface:
                 # Normalize data type to float32 if needed
                 if image_data.dtype not in (np.uint16, np.float32):
                     image_data = image_data.astype(np.float32)
-
-                # Flip the image vertically to make it bottom-up
-                image_data = np.flipud(image_data)
                 
                 # Debug print to understand the data structure
                 print(f"Image data shape: {image_data.shape}")
@@ -636,9 +634,12 @@ class NBtoRGBstarsInterface:
         """Update the preview display with the processed image"""
         if image is None:
             return
+        
+        # Flip the image for display purposes only (FITS convention vs display convention)
+        display_image = np.flipud(image)
             
         # Convert to 8-bit for display
-        preview_image = (image * 255).astype(np.uint8)
+        preview_image = (display_image * 255).astype(np.uint8)
         
         # Create PIL image
         pil_image = Image.fromarray(preview_image)
@@ -729,7 +730,6 @@ class NBtoRGBstarsInterface:
             # since Siril expects images in this format
             siril_image_data = np.transpose(combined_data, (2, 0, 1))
             siril_image_data = np.ascontiguousarray(siril_image_data)
-            siril_image_data = siril_image_data[:, ::-1, :]
 
             # Get the processing thread
             with self.siril.image_lock():
