@@ -2,7 +2,15 @@
 # Inspired by CosmicClarity_Sharpen.py developed by Adrian Knagg-Baugh
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# Contact: enderbybear@foxmail.com
+# Contact: report issues with this script to enderbybear (at) foxmail.com or at
+# https://gitlab.com/free-astro/siril-scripts
+
+# *** Please do not submit bug reports about the Cosmic Clarity interface scripts to SetiAstro. ***
+# He has not been involved in writing the scripts and all the scripts do is automate the execution
+# of the CosmicClarity programme. If you think you have found a bug in Cosmic Clarity itself you
+# *MUST* reproduce the bug either standalone from the commandline or using SetiAstroSuite Pro before
+# reporting it.
+
 # Version: 1.0.1
 
 # Release notes:
