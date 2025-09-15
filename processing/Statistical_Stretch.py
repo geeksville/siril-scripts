@@ -1,35 +1,39 @@
 # (c) Cyril Richard 2024
-# Code From Seti Astro Statistical Stretch
+# Code From Seti Astro Statistical Stretch - PyQt Version
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 1.0.3
+# Version 2.0.0
 
 import sirilpy as s
-s.ensure_installed("ttkthemes")
+s.ensure_installed('PyQt6')
 
 import sys
 import argparse
-import tkinter as tk
-from tkinter import ttk, messagebox
-from ttkthemes import ThemedTk
-from sirilpy import tksiril
 import numpy as np
 import math
 
-VERSION = "1.0.4"
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+                            QHBoxLayout, QLabel, QSlider, QCheckBox, QPushButton,
+                            QGroupBox, QMessageBox, QFrame)
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QFont
+
+VERSION = "2.0.0"
 REQUIRES_SIRILPY = "0.6.10"
 # 1.0.1 AKB: convert "requires" to exception handling
 # 1.0.2 CR: round down slider values
 # 1.0.3 CR: fix division by zero when target_median is 0 or 1.0
 # 1.0.4 CM: Better cli/GUI handling
+# 2.0.0 CR: Using PyQt6 instead of tkinter
 
 if not s.check_module_version(f'>={REQUIRES_SIRILPY}'):
     print(f"Please install sirilpy version {REQUIRES_SIRILPY} or higher")
     sys.exit(1)
 
-class StatisticalStretchInterface:
-    def __init__(self, siril: s.SirilInterface, root=None, cli_args=None):
-
+class StatisticalStretchInterface(QMainWindow):
+    def __init__(self, siril: s.SirilInterface, cli_args=None):
+        super().__init__()
+        
         self.cli_call = cli_args is not None
         # If no CLI args, create a default namespace with defaults
         if cli_args is None:
@@ -46,17 +50,11 @@ class StatisticalStretchInterface:
         if hasattr(cli_args, 'median'):
             cli_args.median = max(0.01, min(0.99, cli_args.median))
 
-        if root:
-            self.root = root
-            self.root.title(f"Statistical Stretch Interface - v{VERSION}")
-            self.root.resizable(False, False)
-            self.style = tksiril.standard_style()
-
         self.siril = siril
 
         if not self.siril.is_image_loaded():
-            if root:
-                self.siril.error_messagebox("No image is loaded")
+            if not self.cli_call:
+                self.show_error_message("No image is loaded")
             else:
                 print("No image is loaded")
             return
@@ -66,174 +64,159 @@ class StatisticalStretchInterface:
         except s.CommandError:
             return
 
-        if root:
-            self.create_widgets()
-            tksiril.match_theme_to_siril(self.root, self.siril)
-
-        # Only apply changes if CLI call
-        if self.cli_call:
+        if not self.cli_call:
+            self.init_ui()
+        else:
+            # Only apply changes if CLI call
             self.apply_changes(from_cli=True)
+
+    def init_ui(self):
+        self.setWindowTitle(f"Statistical Stretch Interface - v{VERSION}")
+        self.setFixedWidth(400)
+        
+        # Central widget
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        
+        # Main layout
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
+        
+        main_layout.addSpacing(10)
+        
+        # Parameters group
+        params_group = QGroupBox("Parameters")
+        params_layout = QHBoxLayout(params_group)  # Use horizontal layout directly
+        params_layout.setContentsMargins(10, 5, 10, 5)  # Reduce vertical margins
+        
+        # Target Median
+        median_label = QLabel("Target median:")
+        params_layout.addWidget(median_label)
+        
+        self.target_median_slider = QSlider(Qt.Orientation.Horizontal)
+        self.target_median_slider.setMinimum(1)  # 0.01 * 100
+        self.target_median_slider.setMaximum(99)  # 0.99 * 100
+        initial_value = max(0.01, self.cli_args.median) * 100
+        self.target_median_slider.setValue(int(initial_value))
+        self.target_median_slider.valueChanged.connect(self.update_target_median_display)
+        params_layout.addWidget(self.target_median_slider)
+        
+        self.target_median_display = QLabel(f"{self.floor_value(max(0.01, self.cli_args.median)):.2f}")
+        self.target_median_display.setMinimumWidth(50)
+        params_layout.addWidget(self.target_median_display)
+        
+        main_layout.addWidget(params_group)
+        
+        # Options group
+        options_group = QGroupBox("Options")
+        options_layout = QVBoxLayout(options_group)
+        options_layout.setContentsMargins(10, 5, 10, 5)  # Reduce vertical margins
+        options_layout.setSpacing(5)  # Reduce spacing between elements
+        
+        # Linked Stretch checkbox
+        self.linked_stretch_checkbox = QCheckBox("Linked Stretch")
+        self.linked_stretch_checkbox.setChecked(self.cli_args.linked)
+        self.linked_stretch_checkbox.setToolTip(
+            "When enabled, applies the same stretching parameters to all color channels "
+            "simultaneously for color images. When disabled, stretches each color channel independently."
+        )
+        options_layout.addWidget(self.linked_stretch_checkbox)
+        
+        # Normalize checkbox
+        self.normalize_checkbox = QCheckBox("Normalize")
+        self.normalize_checkbox.setChecked(self.cli_args.normalize)
+        self.normalize_checkbox.setToolTip(
+            "Scales the image data to use the full dynamic range from 0 to 1, "
+            "ensuring maximum contrast and detail preservation after stretching."
+        )
+        options_layout.addWidget(self.normalize_checkbox)
+        
+        # Apply Curve checkbox
+        self.apply_curve_checkbox = QCheckBox("Apply Curves Adjustment")
+        self.apply_curve_checkbox.setChecked(self.cli_args.boost > 0)
+        self.apply_curve_checkbox.toggled.connect(self.toggle_curves_boost)
+        self.apply_curve_checkbox.setToolTip(
+            "Enables non-linear curve boosting to enhance image contrast and bring out "
+            "finer details by applying a power law transformation."
+        )
+        options_layout.addWidget(self.apply_curve_checkbox)
+        
+        # Curves Boost
+        curves_layout = QHBoxLayout()
+        curves_label = QLabel("Curves Boost:")
+        curves_layout.addWidget(curves_label)
+        
+        self.curves_boost_slider = QSlider(Qt.Orientation.Horizontal)
+        self.curves_boost_slider.setMinimum(0)
+        self.curves_boost_slider.setMaximum(50)  # 0.5 * 100
+        self.curves_boost_slider.setValue(int(self.cli_args.boost * 100))
+        self.curves_boost_slider.valueChanged.connect(self.update_curves_boost_display)
+        self.curves_boost_slider.setToolTip(
+            "Controls the intensity of the non-linear curve adjustment. Higher values "
+            "increase contrast and emphasize faint details, but can also introduce more noise or artifacts."
+        )
+        curves_layout.addWidget(self.curves_boost_slider)
+        
+        self.curves_boost_display = QLabel(f"{self.floor_value(self.cli_args.boost):.2f}")
+        self.curves_boost_display.setMinimumWidth(50)
+        curves_layout.addWidget(self.curves_boost_display)
+        
+        options_layout.addLayout(curves_layout)
+        
+        # Initially disable curves boost if no boost
+        if self.cli_args.boost == 0:
+            self.curves_boost_slider.setEnabled(False)
+            
+        main_layout.addWidget(options_group)
+        
+        # Add stretch to push buttons to bottom
+        main_layout.addStretch()
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close_dialog)
+        close_btn.setToolTip("Close the Statistical Stretch interface and disconnect from Siril. "
+                           "No changes will be made to the current image.")
+        button_layout.addWidget(close_btn)
+        
+        apply_btn = QPushButton("Apply")
+        apply_btn.clicked.connect(self.apply_changes)
+        apply_btn.setToolTip("Apply the selected statistical stretch parameters to the current image. "
+                           "Changes can be undone using Siril's undo function.")
+        button_layout.addWidget(apply_btn)
+        
+        main_layout.addLayout(button_layout)
 
     def floor_value(self, value, decimals=2):
         """Floor a value to the specified number of decimal places"""
         factor = 10 ** decimals
         return math.floor(value * factor) / factor
 
-    def update_target_median_display(self, *args):
+    def update_target_median_display(self):
         """Update the displayed target median value with floor rounding"""
-        value = self.target_median_var.get()
+        value = self.target_median_slider.value() / 100.0
         rounded_value = self.floor_value(value)
-        self.target_median_display_var.set(f"{rounded_value:.2f}")
+        self.target_median_display.setText(f"{rounded_value:.2f}")
 
-    def update_curves_boost_display(self, *args):
+    def update_curves_boost_display(self):
         """Update the displayed curves boost value with floor rounding"""
-        value = self.curves_boost_var.get()
+        value = self.curves_boost_slider.value() / 100.0
         rounded_value = self.floor_value(value)
-        self.curves_boost_display_var.set(f"{rounded_value:.2f}")
-
-    def create_widgets(self):
-        # Main frame with no padding
-        main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
-
-        # Title
-        title_label = ttk.Label(
-            main_frame,
-            text="Statistical Stretch Settings",
-            style="Header.TLabel"
-        )
-        title_label.pack(pady=(0, 20))
-
-        # Parameters frame
-        params_frame = ttk.LabelFrame(main_frame, text="Parameters", padding=10)
-        params_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        # Target Median
-        median_frame = ttk.Frame(params_frame)
-        median_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(median_frame, text="Target median:").pack(side=tk.LEFT)
-        self.target_median_var = tk.DoubleVar(value=max(0.01, self.cli_args.median))  # Ensure minimum value is 0.01
-        self.target_median_display_var = tk.StringVar(value=f"{self.floor_value(max(0.01, self.cli_args.median)):.2f}")
-        
-        # Add trace to update display when slider changes
-        self.target_median_var.trace_add("write", self.update_target_median_display)
-        
-        target_median_scale = ttk.Scale(
-            median_frame,
-            from_=0.01,
-            to=0.99,
-            orient=tk.HORIZONTAL,
-            variable=self.target_median_var,
-            length=200
-        )
-        target_median_scale.pack(side=tk.LEFT, padx=10, expand=True)
-        ttk.Label(
-            median_frame,
-            textvariable=self.target_median_display_var,
-            width=5,
-            style="Value.TLabel"
-        ).pack(side=tk.LEFT)
-        tksiril.create_tooltip(target_median_scale, f"Adjusts the target median value for image stretching. A lower value will darken the image, while a higher value will brighten it.")
-
-        # Options frame
-        options_frame = ttk.LabelFrame(main_frame, text="Options", padding=10)
-        options_frame.pack(fill=tk.X, padx=5, pady=10)
-
-        # Linked Stretch checkbox
-        self.linked_stretch_var = tk.BooleanVar(value=self.cli_args.linked)
-        linked_stretch_checkbox = ttk.Checkbutton(
-            options_frame,
-            text="Linked Stretch",
-            variable=self.linked_stretch_var,
-            style="TCheckbutton"
-        )
-        linked_stretch_checkbox.pack(anchor=tk.W, pady=2)
-        tksiril.create_tooltip(linked_stretch_checkbox, "When enabled, applies the same stretching parameters to all color channels simultaneously for color images. When disabled, stretches each color channel independently.")
-
-        # Normalize checkbox
-        self.normalize_var = tk.BooleanVar(value=self.cli_args.normalize)
-        normalize_stretch_checkbox = ttk.Checkbutton(
-            options_frame,
-            text="Normalize",
-            variable=self.normalize_var,
-            style="TCheckbutton"
-        )
-        normalize_stretch_checkbox.pack(anchor=tk.W, pady=2)
-        tksiril.create_tooltip(normalize_stretch_checkbox, "Scales the image data to use the full dynamic range from 0 to 1, ensuring maximum contrast and detail preservation after stretching.")
-
-        # Apply Curve checkbox
-        self.apply_curve_var = tk.BooleanVar(value=self.cli_args.boost > 0)
-        apply_curve_checkbox = ttk.Checkbutton(
-            options_frame,
-            text="Apply Curves Adjustment",
-            variable=self.apply_curve_var,
-            command=self.toggle_curves_boost,
-            style="TCheckbutton"
-        )
-        apply_curve_checkbox.pack(anchor=tk.W, pady=2)
-        tksiril.create_tooltip(apply_curve_checkbox, "Enables non-linear curve boosting to enhance image contrast and bring out finer details by applying a power law transformation.")
-
-        # Curves Boost frame
-        self.curves_boost_frame = ttk.Frame(options_frame)
-        self.curves_boost_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(self.curves_boost_frame, text="Curves Boost:").pack(side=tk.LEFT)
-
-        self.curves_boost_var = tk.DoubleVar(value=self.cli_args.boost)
-        self.curves_boost_display_var = tk.StringVar(value=f"{self.floor_value(self.cli_args.boost):.2f}")
-        
-        # Add trace to update display when slider changes
-        self.curves_boost_var.trace_add("write", self.update_curves_boost_display)
-        
-        self.curves_boost_scale = ttk.Scale(
-            self.curves_boost_frame,
-            from_=0.0,
-            to=0.5,
-            orient=tk.HORIZONTAL,
-            variable=self.curves_boost_var,
-            length=200
-        )
-        self.curves_boost_scale.pack(side=tk.LEFT, padx=10, expand=True)
-        ttk.Label(
-            self.curves_boost_frame,
-            textvariable=self.curves_boost_display_var,
-            width=5,
-            style="Value.TLabel"
-        ).pack(side=tk.LEFT)
-        tksiril.create_tooltip(self.curves_boost_scale, f"Controls the intensity of the non-linear curve adjustment. Higher values increase contrast and emphasize faint details, but can also introduce more noise or artifacts.")
-
-        # Initially disable curves boost if no boost
-        if self.cli_args.boost == 0:
-            self.curves_boost_scale.state(['disabled'])
-
-        # Buttons frame
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(pady=20)
-
-        close_btn = ttk.Button(
-            button_frame,
-            text="Close",
-            command=self.close_dialog,
-            style="TButton"
-        )
-        close_btn.pack(side=tk.LEFT, padx=5)
-        tksiril.create_tooltip(close_btn, "Close the Statistical Stretch interface and disconnect from Siril. No changes will be made to the current image.")
-
-        apply_btn = ttk.Button(
-            button_frame,
-            text="Apply",
-            command=self.apply_changes,
-            style="TButton"
-        )
-        apply_btn.pack(side=tk.LEFT, padx=5)
-        tksiril.create_tooltip(apply_btn, "Apply the selected statistical stretch parameters to the current image. Changes can be undone using Siril's undo function.")
+        self.curves_boost_display.setText(f"{rounded_value:.2f}")
 
     def toggle_curves_boost(self):
-        if self.apply_curve_var.get():
-            self.curves_boost_scale.state(['!disabled'])
-        else:
-            self.curves_boost_scale.state(['disabled'])
+        enabled = self.apply_curve_checkbox.isChecked()
+        self.curves_boost_slider.setEnabled(enabled)
+
+    def show_error_message(self, message):
+        msg_box = QMessageBox()
+        msg_box.setIcon(QMessageBox.Icon.Critical)
+        msg_box.setWindowTitle("Error")
+        msg_box.setText(message)
+        msg_box.exec()
 
     def stretch_mono_image(self, fit, target_median, normalize=False, apply_curves=False, curves_boost=0.0):
         # Ensure target_median is between 0.01 and 0.99
@@ -317,11 +300,11 @@ class StatisticalStretchInterface:
                     apply_curves = self.cli_args.boost is not None and self.cli_args.boost > 0
                     curves_boost = self.cli_args.boost or 0.0
                 else:
-                    target_median = max(0.01, self.target_median_var.get())  # Ensure minimum is 0.01
-                    linked_stretch = self.linked_stretch_var.get()
-                    normalize = self.normalize_var.get()
-                    apply_curves = self.apply_curve_var.get()
-                    curves_boost = self.curves_boost_var.get() if apply_curves else 0.0
+                    target_median = max(0.01, self.target_median_slider.value() / 100.0)  # Ensure minimum is 0.01
+                    linked_stretch = self.linked_stretch_checkbox.isChecked()
+                    normalize = self.normalize_checkbox.isChecked()
+                    apply_curves = self.apply_curve_checkbox.isChecked()
+                    curves_boost = self.curves_boost_slider.value() / 100.0 if apply_curves else 0.0
 
                 # Get current image
                 fit = self.siril.get_image()
@@ -351,15 +334,12 @@ class StatisticalStretchInterface:
             if from_cli:
                 print(f"Error: {str(e)}")
             else:
-                messagebox.showerror("Error", str(e))
+                self.show_error_message(str(e))
 
     def close_dialog(self):
-        if hasattr(self, 'root'):
-            self.root.quit()
-            self.root.destroy()
+        self.close()
 
 def main():
-
     try:
         # Launch to Interface to determine if we are in CLI or GUI mode and to init connection
         siril = s.SirilInterface()
@@ -367,10 +347,18 @@ def main():
             siril.connect()
         except s.SirilConnectionError:
             if not siril.is_cli():
-                siril.error_messagebox("Failed to connect to Siril")
+                app = QApplication(sys.argv)
+                app.setStyle('Fusion')
+                msg_box = QMessageBox()
+                msg_box.setIcon(QMessageBox.Icon.Critical)
+                msg_box.setWindowTitle("Error")
+                msg_box.setText("Failed to connect to Siril")
+                msg_box.exec()
+                sys.exit(1)
             else:
                 print("Failed to connect to Siril")
             return
+            
         if siril.is_cli():
             # CLI mode
             parser = argparse.ArgumentParser(description="Statistical Stretch for Astronomical Images")
@@ -384,12 +372,16 @@ def main():
                                 help="Normalize image after stretch")
 
             args = parser.parse_args()
-            app = StatisticalStretchInterface(siril, cli_args=args)
+            app_instance = StatisticalStretchInterface(siril, cli_args=args)
         else:
             # GUI mode
-            root = ThemedTk()
-            app = StatisticalStretchInterface(siril, root)
-            root.mainloop()
+            app = QApplication(sys.argv)
+            app.setStyle('Fusion')
+            app.setApplicationName("Statistical Stretch Interface")
+            window = StatisticalStretchInterface(siril)
+            window.show()
+            sys.exit(app.exec())
+            
     except Exception as e:
         print(f"Error initializing application: {str(e)}")
         sys.exit(1)

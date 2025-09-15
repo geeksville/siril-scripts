@@ -1,21 +1,22 @@
 # (c) Adrian Knagg-Baugh from Franklin Marek SAS code (2025)
-# AutoBGE for Siril - Ported from PyQt to Siril/tkinter
+# AutoBGE for Siril - Converted to PyQt6
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 1.0.4
+# Version 2.0.0
 # 1.0.0 Initial release
 # 1.0.1 Clear rectangular selection after setting exclusion area
 # 1.0.2 Mono images remain mono after processing
 # 1.0.3 Fix copypasta error that meant RGB background couldn't be
 #       shown with the "Show Gradient Removed" button.
 # 1.0.4 Fix CLI mode so the script can be used with pyscript
+# 2.0.0 Converted to PyQt6
 
 """
 Auto Background Extraction script for Siril
 ===========================================
 
-This script ports the SetiAstro AutoDBE script to use
-Tk instead of pyQt and some features of the sirilpy module
+This script ports the SetiAstro AutoDBE script to interface
+with Siril and uses some features of the sirilpy module
 for setting exclusion areas and showing the optimized sample
 points used for each stage of the processing.
 
@@ -49,28 +50,46 @@ script with pyscript.
 
 import sys
 import argparse
-import tkinter as tk
-from tkinter import ttk, messagebox
 import sirilpy as s
-from sirilpy import tksiril
-s.ensure_installed("opencv-python", "scipy", "ttkthemes")
+s.ensure_installed("opencv-python", "scipy", "PyQt6")
 import numpy as np
 import math
 import cv2
-from tkinter import ttk, messagebox
-from ttkthemes import ThemedTk
 from scipy.interpolate import Rbf
 
-VERSION = "1.0.4"
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
+                            QWidget, QLabel, QSpinBox, QDoubleSpinBox, QSlider,
+                            QCheckBox, QPushButton, QGroupBox, QMessageBox, QFrame)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QFont
+
+VERSION = "2.0.0"
 
 if not s.check_module_version(">=0.7.41"):
     print("Error: requires sirilpy version 0.7.41 or higher")
     sys.exit(1)
 
+class ProcessingThread(QThread):
+    """Thread for processing the image to avoid blocking the UI"""
+    finished = pyqtSignal()
+    progress = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, processor):
+        super().__init__()
+        self.processor = processor
+
+    def run(self):
+        try:
+            self.processor.process_image_threaded(self.progress.emit)
+            self.finished.emit()
+        except Exception as e:
+            self.error.emit(str(e))
+
 class GradientRemovalInterface:
-    def __init__(self, siril: s.SirilInterface, root=None, cli_args=None):
+    def __init__(self, siril: s.SirilInterface, app=None, cli_args=None):
         self.siril = siril
-        self.root = root
+        self.app = app
 
         self.cli_call = self.siril.is_cli()
         # If no CLI args, create a default namespace with defaults
@@ -92,7 +111,7 @@ class GradientRemovalInterface:
                 self.siril.connect()
             except s.SirilConnectionError:
                 if self.cli_call:
-                    messagebox.showerror("Error", "Failed to connect to Siril")
+                    QMessageBox.critical(None, "Error", "Failed to connect to Siril")
                     self.close_dialog()
                 else:
                     print("Error: failed to connect to Siril", file=sys.stderr)
@@ -102,7 +121,7 @@ class GradientRemovalInterface:
             self.siril.cmd("requires", "1.4.0-beta3")
         except s.CommandError:
             if not self.cli_call:
-                messagebox.showerror("Error", "Siril version requirement not met")
+                QMessageBox.critical(None, "Error", "Siril version requirement not met")
                 self.close_dialog()
             else:
                 print("Error: Siril version requirements not met", file=sys.stderr)
@@ -126,7 +145,7 @@ class GradientRemovalInterface:
         self.image = self.siril.get_image_pixeldata()
         if self.image is None:
             if not self.cli_call:
-                messagebox.showerror("Error", "Could not get image")
+                QMessageBox.critical(None, "Error", "Could not get image")
                 self.close_dialog()
             else:
                 print("Error: could not get image", file=sys.stderr)
@@ -142,6 +161,9 @@ class GradientRemovalInterface:
         if self.originally_16bit:
             self.image = self.image.astype(np.float32) / 65535
 
+        # Processing thread
+        self.processing_thread = None
+
         if self.cli_call:
             # Configure parameters
             self.num_sample_points = self.cli_args.npoints
@@ -152,16 +174,11 @@ class GradientRemovalInterface:
                            f"sample points, polynomial degree {self.poly_degree} and "
                            f"RBF smoothness {self.rbf_smooth}")
             self.process_image()
-        elif root:
-            # Store root for GUI mode
-            self.root.attributes('-topmost', True)
-            self.root.title(f"Automatic Background Extraction - v{VERSION}")
-            self.root.resizable(False, False)
-            self.style = tksiril.standard_style()
-            tksiril.match_theme_to_siril(self.root, self.siril)
+        elif app:
+            # Store app for GUI mode
             self.create_widgets()
         else:
-            print("Error: not called from the CLI and no root window created")
+            print("Error: not called from the CLI and no app created")
 
     def close_dialog(self):
         """Close the dialog and disconnect from Siril"""
@@ -170,183 +187,178 @@ class GradientRemovalInterface:
             self.siril.disconnect()
         except Exception:
             pass
-        if hasattr(self, 'root'):
-            self.root.destroy()
+        if hasattr(self, 'window'):
+            self.window.close()
 
     def floor_value(self, value, decimals=2):
         """Floor a value to the specified number of decimal places"""
         factor = 10 ** decimals
         return math.floor(value * factor) / factor
 
-    def update_rbf_smooth_display(self, *args):
-        """Update the displayed target median value with floor rounding"""
-        value = self.rbf_smooth_var.get()
-        self.rbf_smooth = float(value)
-        rounded_value = self.floor_value(value)
-        self.rbf_smooth_display_var.set(f"{rounded_value:.2f}")
+    def update_rbf_smooth_display(self):
+        """Update the displayed RBF smooth value"""
+        value = self.rbf_smooth_slider.value() / 100.0  # Convert from 0-1000 to 0-10.0
+        self.rbf_smooth = value
+        rounded_value = self.floor_value(value, 2)
+        self.rbf_smooth_label.setText(f"{rounded_value:.2f}")
 
     def create_widgets(self):
-        # Initialize GUI-specific variables here (after root window exists)
-        self.rbf_smooth_var = tk.DoubleVar(value=self.rbf_smooth)
+        # Create main window
+        self.window = QMainWindow()
+        self.window.setWindowTitle(f"Automatic Background Extraction - v{VERSION}")
+        self.window.setFixedSize(600, 550)
 
-        # Main frame
-        main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Store the base window flags
+        self.base_flags = self.window.windowFlags()
+        self.window.setWindowFlags(self.base_flags | Qt.WindowType.WindowStaysOnTopHint)
+
+        # Create central widget
+        central_widget = QWidget()
+        self.window.setCentralWidget(central_widget)
+
+        # Main layout
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(10, 10, 10, 10)
 
         # Title
-        title_label = ttk.Label(
-            main_frame,
-            text="Gradient Removal",
-            style="Header.TLabel"
-        )
-        title_label.pack(pady=(0, 10))
+        title_label = QLabel("Gradient Removal")
+        title_font = QFont()
+        title_font.setBold(True)
+        title_font.setPointSize(14)
+        title_label.setFont(title_font)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(title_label)
 
-        # Instructions box
-        instruction_frame = ttk.LabelFrame(main_frame, text="Instructions", padding=5)
-        instruction_frame.pack(fill=tk.X, pady=5)
+        # Instructions group
+        instructions_group = QGroupBox("Instructions")
+        instructions_layout = QVBoxLayout(instructions_group)
 
-        instructions = ttk.Label(
-            instruction_frame,
-            text="""
+        instructions_text = QLabel("""
 1. Ensure an image is loaded in Siril.
-2. Optionally, draw exclusion zones on the image in the main Siril window. Exclusion zones are useful to prevent over-correction of truly dark features like dark nebulae.
+2. Optionally, draw exclusion zones on the image in the main Siril window. Exclusion \
+zones are useful to prevent over-correction of truly dark features like dark nebulae. \
+The \"Always on Top\" checkbox can be used to prevent the script going behind Siril \
+when drawing exclusion areas.
 3. Adjust parameters as needed.
 4. Process the image to remove gradients.
-            """,
-            wraplength=380
-        )
-        instructions.pack(fill=tk.X, padx=5, pady=5)
+        """)
+        instructions_text.setWordWrap(True)
+        instructions_layout.addWidget(instructions_text)
+        main_layout.addWidget(instructions_group)
 
-        # Parameters frame
-        params_frame = ttk.LabelFrame(main_frame, text="Parameters", padding=5)
-        params_frame.pack(fill=tk.X, pady=5)
+        # Parameters group
+        params_group = QGroupBox("Parameters")
+        params_layout = QVBoxLayout(params_group)
 
         # Number of sample points
-        sample_frame = ttk.Frame(params_frame)
-        sample_frame.pack(fill=tk.X, pady=2)
-
-        ttk.Label(sample_frame, text="Number of Sample Points:").pack(side=tk.LEFT)
-        self.sample_points_var = tk.IntVar(value=self.num_sample_points)
-        self.sample_points_spinbox = ttk.Spinbox(
-            sample_frame,
-            from_=10,
-            to=1000,
-            increment=10,
-            textvariable=self.sample_points_var,
-            width=10,
-        )
-        self.sample_points_spinbox.pack(side=tk.RIGHT, padx=5)
-        tksiril.create_tooltip(self.sample_points_spinbox, "Number of sample points for gradient estimation")
+        sample_layout = QHBoxLayout()
+        sample_layout.addWidget(QLabel("Number of Sample Points:"))
+        self.sample_points_spinbox = QSpinBox()
+        self.sample_points_spinbox.setRange(10, 1000)
+        self.sample_points_spinbox.setSingleStep(10)
+        self.sample_points_spinbox.setValue(self.num_sample_points)
+        self.sample_points_spinbox.setToolTip("Number of sample points for gradient estimation")
+        sample_layout.addWidget(self.sample_points_spinbox)
+        params_layout.addLayout(sample_layout)
 
         # Polynomial degree
-        poly_frame = ttk.Frame(params_frame)
-        poly_frame.pack(fill=tk.X, pady=2)
-
-        ttk.Label(poly_frame, text="Polynomial Degree:").pack(side=tk.LEFT)
-        self.poly_degree_var = tk.IntVar(value=self.poly_degree)
-        self.poly_degree_spinbox = ttk.Spinbox(
-            poly_frame,
-            from_=1,
-            to=10,
-            increment=1,
-            textvariable=self.poly_degree_var,
-            width=10,
-        )
-        self.poly_degree_spinbox.pack(side=tk.RIGHT, padx=5)
-        tksiril.create_tooltip(self.poly_degree_spinbox, "Degree of polynomial for gradient fitting")
+        poly_layout = QHBoxLayout()
+        poly_layout.addWidget(QLabel("Polynomial Degree:"))
+        self.poly_degree_spinbox = QSpinBox()
+        self.poly_degree_spinbox.setRange(1, 10)
+        self.poly_degree_spinbox.setValue(self.poly_degree)
+        self.poly_degree_spinbox.setToolTip("Degree of polynomial for gradient fitting")
+        poly_layout.addWidget(self.poly_degree_spinbox)
+        params_layout.addLayout(poly_layout)
 
         # RBF smoothing
-        rbf_frame = ttk.Frame(params_frame)
-        rbf_frame.pack(fill=tk.X, pady=2)
+        rbf_layout = QHBoxLayout()
+        rbf_layout.addWidget(QLabel("RBF Smoothness:"))
+        self.rbf_smooth_slider = QSlider(Qt.Orientation.Horizontal)
+        self.rbf_smooth_slider.setRange(0, 1000)  # 0 to 10.0 with 0.01 precision
+        self.rbf_smooth_slider.setValue(int(self.rbf_smooth * 100))
+        self.rbf_smooth_slider.setToolTip("RBF smoothing parameter")
+        self.rbf_smooth_slider.valueChanged.connect(self.update_rbf_smooth_display)
+        rbf_layout.addWidget(self.rbf_smooth_slider)
 
-        self.rbf_smooth_display_var = \
-            tk.StringVar(value=f"{self.floor_value(self.rbf_smooth_var.get())}")
-        self.rbf_smooth_var.trace_add("write", self.update_rbf_smooth_display)
-
-        ttk.Label(rbf_frame, text="RBF Smoothness:").pack(side=tk.LEFT)
-        self.rbf_smooth_scale = ttk.Scale(
-            rbf_frame,
-            from_=0.0,
-            to=10.0,
-            orient=tk.HORIZONTAL,
-            variable=self.rbf_smooth_var,
-            length=150,
-        )
-        self.rbf_smooth_scale.pack(side=tk.RIGHT, padx=5)
-
-        self.rbf_smooth_label = ttk.Label(rbf_frame, textvariable= \
-            self.rbf_smooth_display_var,
-            width=5,
-            style="Value.TLabel")
-        self.rbf_smooth_label.pack(side=tk.RIGHT, padx=5)
-        tksiril.create_tooltip(self.rbf_smooth_scale, "RBF smoothing parameter")
+        self.rbf_smooth_label = QLabel(f"{self.floor_value(self.rbf_smooth):.2f}")
+        self.rbf_smooth_label.setMinimumWidth(50)
+        rbf_layout.addWidget(self.rbf_smooth_label)
+        params_layout.addLayout(rbf_layout)
 
         # Show gradient checkbox
-        self.show_gradient_var = tk.BooleanVar(value=self.show_gradient)
-        self.show_gradient_checkbox = ttk.Checkbutton(
-            params_frame,
-            text="Show Gradient Removed",
-            variable=self.show_gradient_var,
-            command=self.toggle_output,
-            style="TCheckbutton"
-        )
-        self.show_gradient_checkbox.pack(anchor=tk.W, pady=2)
-        tksiril.create_tooltip(self.show_gradient_checkbox, "Display the computed gradient (only "
-                               "available after processing)")
-        self.show_gradient_checkbox.config(state='disabled')
+        self.show_gradient_checkbox = QCheckBox("Show Gradient Removed")
+        self.show_gradient_checkbox.setChecked(self.show_gradient)
+        self.show_gradient_checkbox.setEnabled(False)
+        self.show_gradient_checkbox.setToolTip("Display the computed gradient (only available after processing)")
+        self.show_gradient_checkbox.toggled.connect(self.toggle_output)
+        params_layout.addWidget(self.show_gradient_checkbox)
 
-        # Action buttons frame
-        action_frame = ttk.Frame(main_frame)
-        action_frame.pack(fill=tk.X, pady=10)
+        main_layout.addWidget(params_group)
 
-        self.add_exclusion_button = ttk.Button(
-            action_frame,
-            text="Add Exclusion Area",
-            command=self.add_exclusion,
-            style="TButton"
-        )
-        self.add_exclusion_button.pack(side=tk.LEFT, padx=5)
-        tksiril.create_tooltip(self.add_exclusion_button, "Add an exclusion area. If a selection "
-                "exists, the exclusion will be set to match the selection, otherwise the user can "
-                "draw a freehand exclusion on the Siril image. Note: the script UI window is set "
-                "to topmost so that it doesn't disappear behind the Siril window when drawing "
-                "or selecting exclusions.")
+        # Action buttons
+        button_layout = QHBoxLayout()
 
-        self.clear_exclusion_button = ttk.Button(
-            action_frame,
-            text="Clear Exclusion Areas",
-            command=self.clear_exclusion_areas,
-            style="TButton"
-        )
-        self.clear_exclusion_button.pack(side=tk.LEFT, padx=5)
-        tksiril.create_tooltip(self.clear_exclusion_button, "Clear all drawn exclusion areas. "
-                                "Note: exclusion areas will also clear if the Overlay button "
-                                "in the main Siril UI is toggled off")
+        self.add_exclusion_button = QPushButton("Add Exclusion Area")
+        self.add_exclusion_button.setToolTip("Add an exclusion area. If a selection exists, the exclusion will be set to match the selection, otherwise the user can draw a freehand exclusion on the Siril image.")
+        self.add_exclusion_button.clicked.connect(self.add_exclusion)
+        button_layout.addWidget(self.add_exclusion_button)
 
-        self.close_button = ttk.Button(
-            action_frame,
-            text="Close",
-            command=self.close_dialog,
-            style="TButton"
-        )
-        self.close_button.pack(side=tk.RIGHT, padx=5)
+        self.clear_exclusion_button = QPushButton("Clear Exclusion Areas")
+        self.clear_exclusion_button.setToolTip("Clear all drawn exclusion areas.")
+        self.clear_exclusion_button.clicked.connect(self.clear_exclusion_areas)
+        button_layout.addWidget(self.clear_exclusion_button)
 
-        self.process_button = ttk.Button(
-            action_frame,
-            text="Process",
-            command=self.process_image,
-            style="TButton"
-        )
-        self.process_button.pack(side=tk.RIGHT, padx=5)
-        tksiril.create_tooltip(self.process_button, "Process the image to remove gradients")
+        button_layout.addStretch()
+
+        self.process_button = QPushButton("Process")
+        self.process_button.setToolTip("Process the image to remove gradients")
+        self.process_button.clicked.connect(self.start_processing)
+        button_layout.addWidget(self.process_button)
+
+        self.close_button = QPushButton("Close")
+        self.close_button.clicked.connect(self.close_dialog)
+        button_layout.addWidget(self.close_button)
+
+        main_layout.addLayout(button_layout)
 
         # Status label
-        self.status_label = ttk.Label(main_frame, text="Ready")
-        self.status_label.pack(fill=tk.X, pady=5)
+        self.status_label = QLabel("Ready")
+        self.status_label.setFrameStyle(QFrame.Shape.StyledPanel)
+        self.status_label.setContentsMargins(5, 5, 5, 5)
+        main_layout.addWidget(self.status_label)
 
-        # Set window size
-        self.root.geometry("600x550")
-        self.root.resizable(False, False)
+        # Always on top toggle
+        always_on_top_layout = QHBoxLayout()
+        self.always_on_top_checkbox = QCheckBox("Always on Top")
+        self.always_on_top_checkbox.setToolTip("Make the script stay on top. This helps "
+            "with selecting exclusions. If your desktop doesn't support this "
+            "properly (e.g. Linux / Wayland) you may need to use other methods, such "
+            "as window settings provided by the window manager.")
+        self.always_on_top_checkbox.setChecked(True)  # Start with it on
+        self.always_on_top_checkbox.toggled.connect(self.toggle_always_on_top)
+        always_on_top_layout.addWidget(self.always_on_top_checkbox)
+        always_on_top_layout.addStretch()
+        main_layout.addLayout(always_on_top_layout)
+
+        # Show the window
+        self.window.show()
+
+    def toggle_always_on_top(self):
+        """Toggle the always on top window flag"""
+        # Hide the window first
+        self.window.hide()
+
+        if self.always_on_top_checkbox.isChecked():
+            self.window.setWindowFlags(self.base_flags | Qt.WindowType.WindowStaysOnTopHint)
+        else:
+            self.window.setWindowFlags(self.base_flags)
+
+        # Show the window again to apply changes
+        self.window.show()
+        self.window.raise_()
+        self.window.activateWindow()  # and focused if possible
 
     def add_exclusion(self):
         selection = self.siril.get_siril_selection()
@@ -358,9 +370,8 @@ class GradientRemovalInterface:
             try:
                 self.siril.overlay_draw_polygon(color=0xFF000080, fill=True)
             except s.MouseModeError:
-                messagebox.showwarning("Warning", "Mouse must be in normal drag/select mode to draw a polygon")
+                QMessageBox.warning(self.window, "Warning", "Mouse must be in normal drag/select mode to draw a polygon")
 
-    # Action methods
     def clear_exclusion_areas(self):
         """Clears all drawn exclusion polygons."""
         self.exclusion_polygons = []
@@ -368,7 +379,7 @@ class GradientRemovalInterface:
         self.siril.overlay_clear_polygons()
 
     def toggle_output(self):
-        show_bg = self.show_gradient_var.get()
+        show_bg = self.show_gradient_checkbox.isChecked()
         if show_bg:
             with self.siril.image_lock():
                 output_image = self.gradient_background[0] if self.originally_mono else self.gradient_background
@@ -378,22 +389,49 @@ class GradientRemovalInterface:
                 output_image = self.corrected_image[0] if self.originally_mono else self.corrected_image
                 self.siril.set_image_pixeldata(output_image)
 
-    def process_image(self):
-        """
-        Processes the image to subtract the background in two stages:
-        1. Polynomial gradient removal.
-        2. RBF gradient removal.
-        """
+    def start_processing(self):
+        """Start processing in a separate thread"""
+        # Update parameters from GUI
+        self.num_sample_points = self.sample_points_spinbox.value()
+        self.poly_degree = self.poly_degree_spinbox.value()
 
-        # Disable the process button to prevent multiple clicks
-        if self.root:
-            self.process_button.config(state='disabled')
-            self.process_button.update()
+        # Disable UI during processing
+        self.process_button.setEnabled(False)
+        self.add_exclusion_button.setEnabled(False)
+        self.clear_exclusion_button.setEnabled(False)
 
+        # Start processing thread
+        self.processing_thread = ProcessingThread(self)
+        self.processing_thread.finished.connect(self.processing_finished)
+        self.processing_thread.progress.connect(self.update_status)
+        self.processing_thread.error.connect(self.processing_error)
+        self.processing_thread.start()
+
+    def processing_finished(self):
+        """Called when processing is complete"""
+        self.show_gradient_checkbox.setEnabled(True)
+        self.process_button.setEnabled(True)
+        self.add_exclusion_button.setEnabled(True)
+        self.clear_exclusion_button.setEnabled(True)
+        self.status_label.setText("Processing Complete")
+
+    def processing_error(self, error_msg):
+        """Called when processing encounters an error"""
+        self.process_button.setEnabled(True)
+        self.add_exclusion_button.setEnabled(True)
+        self.clear_exclusion_button.setEnabled(True)
+        self.status_label.setText("Error occurred during processing")
+        QMessageBox.critical(self.window, "Processing Error", f"An error occurred during processing:\n{error_msg}")
+
+    def update_status(self, message):
+        """Update the status label"""
+        self.status_label.setText(message)
+        QApplication.processEvents()  # Allow GUI to update
+
+    def process_image_threaded(self, progress_callback):
+        """Threaded version of process_image with progress callbacks"""
         # Stretch the image before processing
-        if self.root:
-            self.status_label.config(text="Normalizing image for processing...")
-            self.status_label.update_idletasks()
+        progress_callback("Normalizing image for processing...")
         stretched_image = self.stretch_image(self.image)
 
         # Check if the image is color
@@ -408,28 +446,22 @@ class GradientRemovalInterface:
         if self.exclusion_polygons:
             exclusion_mask = self.create_exclusion_mask(stretched_image.shape, self.exclusion_polygons)
 
-        # ------------------ First Stage: Polynomial Gradient Removal ------------------
-        if self.root:
-            self.status_label.config(text="Step 1: Polynomial Gradient Removal")
-            self.status_label.update_idletasks()
-        # Downsample for polynomial background fitting
+        # First Stage: Polynomial Gradient Removal
+        progress_callback("Step 1: Polynomial Gradient Removal")
         small_image_poly = self.downsample_image(stretched_image, self.downsample_scale)
 
-        # Create a downsampled exclusion mask for polynomial fitting
         if exclusion_mask is not None:
             small_exclusion_mask_poly = self.downsample_image(exclusion_mask.astype(np.float32), self.downsample_scale) >= 0.5
         else:
             small_exclusion_mask_poly = None
 
-        # Generate sample points for polynomial fitting with exclusions
         poly_sample_points = self.generate_sample_points(
             small_image_poly, num_points=self.num_sample_points, exclusion_mask=small_exclusion_mask_poly
         )
 
-        # Fit the polynomial gradient
         if is_color:
             poly_background = np.zeros_like(stretched_image)
-            for channel in range(3):  # Process each channel separately
+            for channel in range(3):
                 poly_bg_channel = self.fit_polynomial_gradient(
                     small_image_poly[:, :, channel], poly_sample_points, degree=self.poly_degree
                 )
@@ -438,37 +470,26 @@ class GradientRemovalInterface:
             poly_background_small = self.fit_polynomial_gradient(small_image_poly, poly_sample_points, degree=self.poly_degree)
             poly_background = self.upscale_background(poly_background_small, stretched_image.shape[:2])
 
-        # Subtract the polynomial background
         image_after_poly = stretched_image - poly_background
-
-        # Normalize to restore original median
         image_after_poly = self.normalize_image(image_after_poly, original_median)
-
-        # Clip the values to valid range
         image_after_poly = np.clip(image_after_poly, 0, 1)
 
-        # ------------------ Second Stage: RBF Gradient Removal ------------------
-        if self.root:
-            self.status_label.config(text="Step 2: RBF Gradient Removal")
-            self.status_label.update_idletasks()
-        # Downsample the image after polynomial removal for RBF fitting
+        # Second Stage: RBF Gradient Removal
+        progress_callback("Step 2: RBF Gradient Removal")
         small_image_rbf = self.downsample_image(image_after_poly, self.downsample_scale)
 
-        # Create a downsampled exclusion mask for RBF fitting
         if exclusion_mask is not None:
             small_exclusion_mask_rbf = self.downsample_image(exclusion_mask.astype(np.float32), self.downsample_scale) >= 0.5
         else:
             small_exclusion_mask_rbf = None
 
-        # Generate sample points for RBF fitting with exclusions
         rbf_sample_points = self.generate_sample_points(
             small_image_rbf, num_points=self.num_sample_points, exclusion_mask=small_exclusion_mask_rbf
         )
 
-        # Fit the RBF gradient
         if is_color:
             rbf_background = np.zeros_like(stretched_image)
-            for channel in range(3):  # Process each channel separately
+            for channel in range(3):
                 rbf_bg_channel = self.fit_background(
                     small_image_rbf[:, :, channel], rbf_sample_points, smooth=self.rbf_smooth, patch_size=15
                 )
@@ -477,19 +498,12 @@ class GradientRemovalInterface:
             rbf_background_small = self.fit_background(small_image_rbf, rbf_sample_points, smooth=self.rbf_smooth, patch_size=15)
             rbf_background = self.upscale_background(rbf_background_small, stretched_image.shape[:2])
 
-        # Subtract the RBF background
         corrected_image = image_after_poly - rbf_background
-
-        # Normalize to restore original median
         corrected_image = self.normalize_image(corrected_image, original_median)
-
-        # Clip the values to valid range
         corrected_image = np.clip(corrected_image, 0, 1)
 
-        # Unstretch both the corrected image and the gradient background
-        if self.root:
-            self.status_label.config(text="De-Normalizing the processed images...")
-            self.status_label.update_idletasks()
+        # Unstretch both images
+        progress_callback("De-Normalizing the processed images...")
         corrected_image = self.unstretch_image(corrected_image)
         total_background = poly_background + rbf_background
         gradient_background = self.unstretch_image(total_background)
@@ -505,28 +519,26 @@ class GradientRemovalInterface:
         self.corrected_image = corrected_image.transpose(2, 0, 1)
         self.gradient_background = gradient_background.transpose(2, 0, 1)
 
-        # ------------------ Update Results ------------------
-
         # Update the image in Siril
         self.siril.undo_save_state(f"Auto BGE ({self.num_sample_points} points, "
-                                    "poly degree={self.poly_degree}, "
-                                    "RBF smoothness={self.rbf_smooth}")
+                                   f"poly degree={self.poly_degree}, "
+                                   f"RBF smoothness={self.rbf_smooth})")
         with self.siril.image_lock():
             output_image = self.corrected_image[0] if self.originally_mono else self.corrected_image
             self.siril.set_image_pixeldata(output_image)
 
-        if self.root:
-            self.show_gradient_checkbox.config(state='enabled')
-            self.show_gradient_checkbox.update()
-            self.process_button.config(state='enabled')
-            self.process_button.update()
-            self.status_label.config(text="Processing Complete")
-            self.status_label.update_idletasks()
         self.siril.clear_image_bgsamples()
 
-    # ------------------ Helper Functions ------------------
-    # Ensure corrected_image and gradient_background are strictly 3-channel RGB
-    def ensure_rgb(self,image):
+    def process_image(self):
+        """
+        Processes the image to subtract the background in two stages:
+        1. Polynomial gradient removal.
+        2. RBF gradient removal.
+        """
+        self.process_image_threaded(lambda msg: None)  # CLI version without progress callbacks
+
+    # All the image processing helper methods remain the same
+    def ensure_rgb(self, image):
         """
         Ensures the given image is 3-channel RGB.
         Args:
@@ -943,7 +955,7 @@ class GradientRemovalInterface:
                     continue  # Skip points in exclusion areas
 
                 points.append((x_new, y_new))
-    
+
         factor = self.downsample_scale
         scaled_points = [(x * factor, (h - y) * factor) for x, y in points]
         self.siril.set_image_bgsamples(scaled_points, show_samples = True)
@@ -1099,7 +1111,6 @@ class GradientRemovalInterface:
         # Fill the polygons on the exclusion mask
         cv2.fillPoly(exclusion_mask, polygons, 1)  # 1 inside polygons
 
-
         # Update the main mask: False inside exclusion polygons
         mask[exclusion_mask == 1] = False
         return mask
@@ -1122,18 +1133,21 @@ class GradientRemovalInterface:
 
 
 def main():
-
     try:
-        # Launch to Interface to determine if we are in CLI or GUI mode and to init connection
+        # Initialize Qt application
+        app = QApplication(sys.argv)
+
+        # Launch Interface to determine if we are in CLI or GUI mode and to init connection
         siril = s.SirilInterface()
         try:
             siril.connect()
         except s.SirilConnectionError:
             if not siril.is_cli():
-                siril.error_messagebox("Failed to connect to Siril")
+                QMessageBox.critical(None, "Error", "Failed to connect to Siril")
             else:
                 print("Failed to connect to Siril")
             return
+
         if siril.is_cli():
             # CLI mode
             parser = argparse.ArgumentParser(description="Automatic Background Extraction")
@@ -1145,12 +1159,12 @@ def main():
                                 help="Smoothing amount for refinement RBF fit")
 
             args = parser.parse_args()
-            app = GradientRemovalInterface(siril, cli_args=args)
+            processor = GradientRemovalInterface(siril, app, cli_args=args)
         else:
             # GUI mode
-            root = ThemedTk()
-            app = GradientRemovalInterface(siril, root)
-            root.mainloop()
+            processor = GradientRemovalInterface(siril, app)
+            app.exec()
+
     except Exception as e:
         print(f"Error initializing application: {str(e)}")
         sys.exit(1)

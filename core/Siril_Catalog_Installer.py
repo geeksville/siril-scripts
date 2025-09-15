@@ -2,7 +2,7 @@
 # Siril Catalog Installer
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 1.0.6
+# Version 2.2.0 - Refactored with VisPy sphere visualization
 # Version history:
 # 1.0.0 Initial release
 # 1.0.1 Update SPCC DOI number to reflect fixed catalog
@@ -12,8 +12,11 @@
 # 1.0.5 AKB: convert "requires" to use exception handling
 # 1.0.6 CME: remove unnecesary imports, add missing import for shutil, corrected errors enums
 # 1.0.7 CME: use new sirilpy filedialog module for Linux
+# 2.0.0 CR: Using PyQt6 instead of tkinter
+# 2.1.0 Refactored with Qt OpenGL sphere visualization
+# 2.2.0 Refactored with VisPy sphere visualization
 
-VERSION = "1.0.7"
+VERSION = "2.2.0"
 
 # Catalog retrieval details
 ASTRO_RECORD = 14692304
@@ -24,38 +27,500 @@ SPCC_CHUNKLEVEL = 1
 SPCC_INDEXLEVEL = 8
 
 import sirilpy as s
-from sirilpy import tksiril
 import bz2
 import hashlib
 import math
 import os
-import subprocess
 import sys
-import tkinter as tk
-from tkinter import ttk, messagebox
+import ctypes
 import urllib.request
 import numpy as np
 import shutil
+import csv
 
-if s.check_module_version(">=0.6.0") and sys.platform.startswith("linux"):
-    import sirilpy.tkfilebrowser as filedialog
-else:
-    from tkinter import filedialog
+s.ensure_installed("PyQt6", "astropy", "astropy_healpix", "requests", "vispy")
 
-s.ensure_installed("astropy", "astropy_healpix", "matplotlib", "requests", "ttkthemes")
 import astropy.units as u
 from astropy_healpix import HEALPix
+from astropy.coordinates import get_sun, SkyCoord
+from astropy.time import Time
 import requests
-from ttkthemes import ThemedTk
 
-class SirilCatInstallerInterface:
-    def __init__(self, root=None):
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout,
+    QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QGroupBox, QMessageBox, QComboBox, QFrame,
+    QFileDialog, QGridLayout, QDialog
+)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt6.QtGui import QFont, QDoubleValidator
 
-        if root:
-            self.root = root
-            self.root.title(f"Siril Catalog Installer - v{VERSION}")
-            self.root.resizable(False, False)
-            self.style = tksiril.standard_style()
+# VisPy imports
+import vispy
+from vispy import scene
+from vispy.visuals.transforms import STTransform
+from vispy.color import Color
+from vispy.util.quaternion import Quaternion
+from vispy.geometry import create_sphere
+
+# Use PyQt6 backend for VisPy
+vispy.use(app='pyqt6')
+
+class SkyVisualizationDialog(QDialog):
+    """Dialog containing the 3D sky visualization"""
+
+    def __init__(self, visible_pixels, constellation_file, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Sky Coverage Preview")
+        self.setModal(False)
+        self.resize(800, 600)
+
+        layout = QVBoxLayout(self)
+
+        try:
+            self.sky_widget = SkyVisualizationWidget(visible_pixels, constellation_file)
+            # Get the native widget from VisPy canvas
+            native_widget = self.sky_widget.native
+            layout.addWidget(native_widget)
+
+            # Add control buttons
+            control_layout = QHBoxLayout()
+
+            view_toggle_button = QPushButton("Switch to Internal View")
+            view_toggle_button.clicked.connect(self.toggle_view_mode)
+            control_layout.addWidget(view_toggle_button)
+            self.view_toggle_button = view_toggle_button
+
+            close_button = QPushButton("Close")
+            close_button.clicked.connect(self.close)
+            control_layout.addWidget(close_button)
+
+            layout.addLayout(control_layout)
+
+        except Exception as e:
+            error_label = QLabel(f"VisPy visualization not available: {str(e)}")
+            error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(error_label)
+
+    def toggle_view_mode(self):
+        """Toggle between external and internal view modes"""
+        if hasattr(self, 'sky_widget'):
+            is_internal = self.sky_widget.toggle_view_mode()
+            if is_internal:
+                self.view_toggle_button.setText("Switch to External View")
+            else:
+                self.view_toggle_button.setText("Switch to Internal View")
+
+
+class SkyVisualizationWidget:
+    """VisPy-based widget for rendering the celestial sphere with HEALPix coverage"""
+
+    def __init__(self, visible_pixels, constellation_file, parent=None):
+        self.visible_pixels = set(visible_pixels)
+        self.constellation_file = constellation_file
+        self.is_internal_view = False
+
+        # Create VisPy canvas
+        self.canvas = scene.SceneCanvas(
+            keys='interactive',
+            bgcolor='black',
+            size=(800, 600),
+            show=False
+        )
+
+        # Create view and camera
+        self.view = self.canvas.central_widget.add_view()
+        self.setup_external_camera()
+
+        # Initialize all visualizations (both internal and external elements)
+        self.setup_all_visualizations()
+
+    @property
+    def native(self):
+        """Return the native Qt widget"""
+        return self.canvas.native
+
+    def setup_external_camera(self):
+        """Setup camera for external view"""
+        camera = scene.ArcballCamera(
+            fov=45,
+            distance=3.5,
+            center=(0, 0, 0)
+        )
+        camera.flip_factors = (1, 1, 1)  # Normal controls
+        self.view.camera = camera
+        self.view.camera.distance_limits = (2.5, 10.0)
+
+    def setup_internal_camera(self):
+        """Setup camera for internal view"""
+        camera = scene.ArcballCamera(
+            fov=75,  # Wider FOV for internal view
+            distance=0.1,  # Very close to center
+            center=(0, 0, 0)
+        )
+        camera.flip_factors = (1, 1, 1)  # Reversed pan controls
+        self.view.camera = camera
+        self.view.camera.distance_limits = (0.1, 0.1)
+
+    def toggle_view_mode(self):
+        """Toggle between external and internal view modes"""
+        self.is_internal_view = not self.is_internal_view
+
+        if self.is_internal_view:
+            self.setup_internal_camera()
+        else:
+            self.setup_external_camera()
+
+        return self.is_internal_view
+
+    def setup_all_visualizations(self):
+        """Set up all visualization components - both internal and external versions"""
+        # Create opaque black sphere at radius 1.0
+        self.create_opaque_sphere()
+
+        # Create external elements (outside sphere)
+        self.create_external_healpix_mesh()
+        self.create_external_grid_lines()
+        self.create_external_constellation_lines()
+
+        # Create internal elements (inside sphere)
+        self.create_internal_healpix_mesh()
+        self.create_internal_grid_lines()
+        self.create_internal_constellation_lines()
+
+    def create_opaque_sphere(self):
+        """Create an opaque black sphere that blocks visibility between internal/external"""
+        # Create sphere geometry
+        phi, theta = np.mgrid[0:np.pi:36j, 0:2*np.pi:72j]
+        x = np.sin(phi) * np.cos(theta)
+        y = np.sin(phi) * np.sin(theta)
+        z = np.cos(phi)
+
+        # Stack coordinates and reshape for mesh
+        vertices = np.stack([x.flatten(), y.flatten(), z.flatten()], axis=-1).astype(np.float32)
+
+        # Create faces for the sphere
+        faces = []
+        n_phi, n_theta = phi.shape
+        for i in range(n_phi - 1):
+            for j in range(n_theta - 1):
+                # Current quad vertices
+                v1 = i * n_theta + j
+                v2 = i * n_theta + (j + 1) % n_theta
+                v3 = (i + 1) * n_theta + (j + 1) % n_theta
+                v4 = (i + 1) * n_theta + j
+
+                # Two triangles per quad
+                faces.extend([[v1, v2, v3], [v1, v3, v4]])
+
+        faces = np.array(faces, dtype=np.uint32)
+
+        self.sphere_visual = scene.visuals.Mesh(
+            vertices=vertices,
+            faces=faces,
+            color='black',
+            shading='flat',
+            parent=self.view.scene
+        )
+        # Opaque sphere with no face culling - blocks view in both directions
+        self.sphere_visual.set_gl_state(depth_test=True, blend=False, cull_face=False)
+
+    def create_healpix_mesh(self, radius, cull_faces=True):
+        """Create HEALPix mesh at specified radius with optional face culling"""
+        nside_fine = 8
+        nside_coarse = 2
+        pixels_per_coarse = (nside_fine // nside_coarse) ** 2
+        hp = HEALPix(nside=nside_fine, order='nested', frame='icrs')
+        all_vertices = []
+        all_faces = []
+        vertex_count = 0
+
+        # Process every nth pixel to reduce complexity while maintaining coverage
+        step = max(1, hp.npix // 1000)  # Limit to ~1000 polygons max
+
+        for i in range(0, hp.npix, step):
+            containing_grid_pixel = i // pixels_per_coarse
+            is_visible = containing_grid_pixel in self.visible_pixels
+
+            if is_visible:
+                try:
+                    # Get pixel boundary with more points for smoother edges
+                    boundary = hp.boundaries_skycoord(i, step=1)
+
+                    # Convert SkyCoord to Cartesian coordinates
+                    polygon_points = []
+
+                    # Extract coordinates as arrays first
+                    lon_array = boundary.ra.radian
+                    lat_array = boundary.dec.radian
+
+                    # Flatten the arrays to 1D
+                    lon_flat = lon_array.flatten()
+                    lat_flat = lat_array.flatten()
+
+                    # Convert to Cartesian coordinates
+                    for j in range(len(lon_flat)):
+                        lon_val = float(lon_flat[j])
+                        lat_val = float(lat_flat[j])
+
+                        x = math.cos(lat_val) * math.cos(lon_val)
+                        y = math.cos(lat_val) * math.sin(lon_val)
+                        z = math.sin(lat_val)
+                        polygon_points.append([x, y, z])
+
+                    # Ensure we have enough points for triangulation
+                    if len(polygon_points) >= 3:
+                        # Remove duplicate points
+                        unique_points = []
+                        tolerance = 1e-12
+
+                        for point in polygon_points:
+                            is_duplicate = False
+                            for existing in unique_points:
+                                if (abs(point[0] - existing[0]) < tolerance and
+                                    abs(point[1] - existing[1]) < tolerance and
+                                    abs(point[2] - existing[2]) < tolerance):
+                                    is_duplicate = True
+                                    break
+                            if not is_duplicate:
+                                unique_points.append(point)
+
+                        polygon_points = unique_points
+
+                        if len(polygon_points) >= 3:
+                            # Calculate centroid
+                            centroid = [0.0, 0.0, 0.0]
+                            for point in polygon_points:
+                                centroid[0] += point[0]
+                                centroid[1] += point[1]
+                                centroid[2] += point[2]
+
+                            # Normalize centroid to sphere surface
+                            n_points = len(polygon_points)
+                            centroid = [x / n_points for x in centroid]
+                            norm = math.sqrt(sum(x*x for x in centroid))
+                            if norm > 0:
+                                centroid = [x / norm for x in centroid]
+
+                            # Add centroid as first vertex
+                            all_vertices.append(centroid)
+                            centroid_idx = vertex_count
+                            vertex_count += 1
+
+                            # Add polygon vertices
+                            all_vertices.extend(polygon_points)
+
+                            # Create triangulation
+                            n_poly_vertices = len(polygon_points)
+                            for k in range(n_poly_vertices):
+                                next_k = (k + 1) % n_poly_vertices
+
+                                # Check triangle validity
+                                v1 = polygon_points[k]
+                                v2 = polygon_points[next_k]
+
+                                # Calculate triangle area
+                                d1 = [v2[j] - centroid[j] for j in range(3)]
+                                d2 = [v1[j] - centroid[j] for j in range(3)]
+                                cross = [
+                                    d1[1]*d2[2] - d1[2]*d2[1],
+                                    d1[2]*d2[0] - d1[0]*d2[2],
+                                    d1[0]*d2[1] - d1[1]*d2[0]
+                                ]
+                                area = 0.5 * math.sqrt(sum(x*x for x in cross))
+
+                                if area > 1e-12:
+                                    face = [centroid_idx, vertex_count + k, vertex_count + next_k]
+                                    all_faces.append(face)
+
+                            vertex_count += n_poly_vertices
+
+                except Exception as e:
+                    print(f"Error processing pixel {i}: {e}")
+                    continue
+
+        if all_vertices and all_faces:
+            vertices = np.array(all_vertices, dtype=np.float32)
+            faces = np.array(all_faces, dtype=np.uint32)
+
+            # Validate faces
+            valid_faces = []
+            for face in faces:
+                if len(set(face)) == 3 and all(0 <= idx < len(vertices) for idx in face):
+                    valid_faces.append(face)
+
+            if valid_faces:
+                faces = np.array(valid_faces, dtype=np.uint32)
+
+                # Scale vertices to specified radius
+                vertices = vertices / np.linalg.norm(vertices, axis=1, keepdims=True) * radius
+
+                mesh = scene.visuals.Mesh(
+                    vertices=vertices,
+                    faces=faces,
+                    color=(1.0, 0.843, 0.0, 1.0),  # Gold
+                    shading='smooth',
+                    parent=self.view.scene
+                )
+
+                mesh.set_gl_state(
+                    depth_test=True,
+                    blend=False,
+                    cull_face=cull_faces
+                )
+
+                return mesh
+
+        return None
+
+    def create_external_healpix_mesh(self):
+        """Create HEALPix mesh for external viewing (outside sphere)"""
+        self.external_healpix = self.create_healpix_mesh(radius=1.005, cull_faces=True)
+
+    def create_internal_healpix_mesh(self):
+        """Create HEALPix mesh for internal viewing (inside sphere)"""
+        self.internal_healpix = self.create_healpix_mesh(radius=0.99, cull_faces=False)
+
+    def create_grid_lines(self, radius):
+        """Create coordinate grid lines at specified radius"""
+        grid_visuals = []
+
+        # Generate longitude lines
+        lon_lines = []
+        for lon_deg in range(0, 360, 15):
+            lon_rad = math.radians(lon_deg)
+            line_points = []
+            for lat_deg in range(-90, 91, 5):
+                lat_rad = math.radians(lat_deg)
+                x = math.cos(lat_rad) * math.cos(lon_rad) * radius
+                y = math.cos(lat_rad) * math.sin(lon_rad) * radius
+                z = math.sin(lat_rad) * radius
+                line_points.append([x, y, z])
+            lon_lines.extend(line_points)
+
+        # Generate latitude lines
+        lat_lines = []
+        equator_lines = []
+        for lat_deg in range(-90, 91, 15):
+            lat_rad = math.radians(lat_deg)
+            line_points = []
+            for lon_deg in np.linspace(0, 360, 73, endpoint=True):
+                lon_rad = math.radians(lon_deg)
+                x = math.cos(lat_rad) * math.cos(lon_rad) * radius
+                y = math.cos(lat_rad) * math.sin(lon_rad) * radius
+                z = math.sin(lat_rad) * radius
+                line_points.append([x, y, z])
+
+            if lat_deg == 0:  # Equator
+                equator_lines.extend(line_points)
+            else:
+                lat_lines.extend(line_points)
+
+        # Create line visuals
+        if lon_lines:
+            lon_visual = scene.visuals.Line(
+                pos=np.array(lon_lines),
+                color='gray',
+                width=1,
+                connect='segments',
+                parent=self.view.scene
+            )
+            grid_visuals.append(lon_visual)
+
+        if lat_lines:
+            lat_visual = scene.visuals.Line(
+                pos=np.array(lat_lines),
+                color='gray',
+                width=1,
+                connect='segments',
+                parent=self.view.scene
+            )
+            grid_visuals.append(lat_visual)
+
+        if equator_lines:
+            eq_visual = scene.visuals.Line(
+                pos=np.array(equator_lines),
+                color='red',
+                width=2,
+                connect='segments',
+                parent=self.view.scene
+            )
+            grid_visuals.append(eq_visual)
+
+        return grid_visuals
+
+    def create_external_grid_lines(self):
+        """Create grid lines for external viewing"""
+        self.external_grid = self.create_grid_lines(radius=1.01)
+
+    def create_internal_grid_lines(self):
+        """Create grid lines for internal viewing"""
+        self.internal_grid = self.create_grid_lines(radius=0.98)
+
+    def create_constellation_lines(self, radius):
+        """Create constellation lines at specified radius"""
+        if not os.path.exists(self.constellation_file):
+            print(f"Constellation file not found: {self.constellation_file}")
+            return None
+
+        constellation_lines = []
+
+        try:
+            with open(self.constellation_file, 'r') as csvfile:
+                reader = csv.reader(csvfile)
+                next(reader)  # Skip header
+
+                for row in reader:
+                    if len(row) >= 4:
+                        try:
+                            ra1, dec1, ra2, dec2 = map(float, row[:4])
+
+                            # Convert to radians and then to Cartesian
+                            ra1_rad = math.radians(ra1)
+                            dec1_rad = math.radians(dec1)
+                            ra2_rad = math.radians(ra2)
+                            dec2_rad = math.radians(dec2)
+
+                            x1 = math.cos(dec1_rad) * math.cos(ra1_rad) * radius
+                            y1 = math.cos(dec1_rad) * math.sin(ra1_rad) * radius
+                            z1 = math.sin(dec1_rad) * radius
+
+                            x2 = math.cos(dec2_rad) * math.cos(ra2_rad) * radius
+                            y2 = math.cos(dec2_rad) * math.sin(ra2_rad) * radius
+                            z2 = math.sin(dec2_rad) * radius
+
+                            constellation_lines.extend([[x1, y1, z1], [x2, y2, z2]])
+
+                        except (ValueError, IndexError):
+                            continue  # Skip malformed rows
+
+        except Exception as e:
+            print(f"Error loading constellation data: {e}")
+
+        # Create constellation line visual
+        if constellation_lines:
+            return scene.visuals.Line(
+                pos=np.array(constellation_lines),
+                color='white',
+                width=1,
+                connect='segments',
+                parent=self.view.scene
+            )
+
+        return None
+
+    def create_external_constellation_lines(self):
+        """Create constellation lines for external viewing"""
+        self.external_constellations = self.create_constellation_lines(radius=1.015)
+
+    def create_internal_constellation_lines(self):
+        """Create constellation lines for internal viewing"""
+        self.internal_constellations = self.create_constellation_lines(radius=0.97)
+
+class SirilCatInstallerInterface(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(f"Siril Catalog Installer - v{VERSION}")
 
         # Initialize Siril connection
         self.siril = s.SirilInterface()
@@ -63,232 +528,173 @@ class SirilCatInstallerInterface:
         try:
             self.siril.connect()
         except s.SirilConnectionError as e:
-            if root:
-                self.siril.error_messagebox("Failed to connect to Siril")
-                self.close_dialog()
-            else:
-                print("Failed to connect to Siril")
+            QMessageBox.critical(self, "Connection Error", "Failed to connect to Siril")
+            self.close()
             raise RuntimeError(f"Error connecting to Siril: {e}") from e
 
         try:
             self.siril.cmd("requires", "1.3.6")
         except s.CommandError as e:
-            self.close_dialog()
+            self.close()
             raise
 
         self.catalog_path = self.siril.get_siril_userdatadir()
-
-        if root:
-            self.create_widgets()
-            tksiril.match_theme_to_siril(self.root, self.siril)
-
-    def close_dialog(self):
-        self.siril.disconnect()
-        self.root.quit()
-        self.root.destroy()
+        self.create_widgets()
 
     def create_widgets(self):
-        # Main frame with no padding
-        main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+        # Central widget
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
 
-        # Title
-        title_label = ttk.Label(
-            main_frame,
-            text="Siril Catalog Installer",
-            style="Header.TLabel"
-        )
-        title_label.pack(pady=(0, 20))
+        # Main layout
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
 
         # Astrometry Catalog frame
-        astrometry_frame = ttk.LabelFrame(main_frame, text="Astrometry Catalog", padding=10)
-        astrometry_frame.pack(fill=tk.X, padx=5, pady=5)
+        astrometry_group = QGroupBox("Astrometry Catalog")
+        astrometry_layout = QVBoxLayout(astrometry_group)
 
         # Install button for Astrometry
-        astrometry_install_btn = ttk.Button(
-            astrometry_frame,
-            text="Install",
-            command=self.install_astrometry,
-            style="TButton"
-        )
-        astrometry_install_btn.pack(pady=10)
-        tksiril.create_tooltip(astrometry_install_btn, "Install or update the Astrometry catalog. This will "
+        astrometry_install_btn = QPushButton("Install")
+        astrometry_install_btn.clicked.connect(self.install_astrometry)
+        astrometry_install_btn.setToolTip("Install or update the Astrometry catalog. This will "
                         "be installed to the Siril user data directory and set in Preferences -> Astrometry")
+        astrometry_layout.addWidget(astrometry_install_btn)
+
+        main_layout.addWidget(astrometry_group)
 
         # SPCC Catalog frame
-        spcc_frame = ttk.LabelFrame(main_frame, text="SPCC Catalog", padding=10)
-        spcc_frame.pack(fill=tk.X, padx=5, pady=10)
+        spcc_group = QGroupBox("SPCC Catalog")
+        spcc_layout = QVBoxLayout(spcc_group)
 
         # Observer Latitude entry
-        latitude_frame = ttk.Frame(spcc_frame)
-        latitude_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(latitude_frame, text="Observer Latitude:").pack(side=tk.LEFT)
-        self.latitude_var = tk.DoubleVar()
-        latitude_entry = ttk.Entry(
-            latitude_frame,
-            textvariable=self.latitude_var,
-            width=10
-        )
-        latitude_entry.pack(side=tk.LEFT, padx=10)
-        tksiril.create_tooltip(latitude_entry, "Enter your observatory latitude in degrees")
+        latitude_layout = QHBoxLayout()
+        latitude_layout.addWidget(QLabel("Observer Latitude:"))
+        self.latitude_entry = QLineEdit()
+        self.latitude_entry.setValidator(QDoubleValidator())
+        self.latitude_entry.setToolTip("Enter your observatory latitude in degrees")
+        latitude_layout.addWidget(self.latitude_entry)
+        spcc_layout.addLayout(latitude_layout)
 
         # Minimum elevation entry
-        elevation_frame = ttk.Frame(spcc_frame)
-        elevation_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(elevation_frame, text="Minimum elevation:").pack(side=tk.LEFT)
-        self.elevation_var = tk.DoubleVar()
-        elevation_entry = ttk.Entry(
-            elevation_frame,
-            textvariable=self.elevation_var,
-            width=10
-        )
-        elevation_entry.pack(side=tk.LEFT, padx=10)
-        tksiril.create_tooltip(elevation_entry, "Enter minimum elevation in degrees")
+        elevation_layout = QHBoxLayout()
+        elevation_layout.addWidget(QLabel("Minimum elevation:"))
+        self.elevation_entry = QLineEdit()
+        self.elevation_entry.setValidator(QDoubleValidator())
+        self.elevation_entry.setToolTip("Enter minimum elevation in degrees")
+        elevation_layout.addWidget(self.elevation_entry)
+        spcc_layout.addLayout(elevation_layout)
 
         # Areas of Interest combobox
-        area_frame = ttk.Frame(spcc_frame)
-        area_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(area_frame, text="Areas of Interest:").pack(side=tk.LEFT)
-        self.area_var = tk.StringVar()
-        area_combo = ttk.Combobox(
-            area_frame,
-            textvariable=self.area_var,
-            values=["Galaxy Season", "Magellanic Clouds", "Milky Way", "Orion to Taurus", "Summer Triangle"],
-            state="readonly",
-            width=20
-        )
-        self.area_var.set("Galaxy Season")
-        area_combo.pack(side=tk.RIGHT)
-        tksiril.create_tooltip(area_combo, "Select the area of interest for the SPCC catalog. This will install "
+        area_layout = QHBoxLayout()
+        area_layout.addWidget(QLabel("Areas of Interest:"))
+        self.area_combo = QComboBox()
+        self.area_combo.addItems(["Galaxy Season", "Magellanic Clouds", "Milky Way", "Orion to Taurus", "Summer Triangle"])
+        self.area_combo.setCurrentText("Galaxy Season")
+        self.area_combo.setToolTip("Select the area of interest for the SPCC catalog. This will install "
                                "only chunks covering the area of interest")
+        area_layout.addWidget(self.area_combo)
+        spcc_layout.addLayout(area_layout)
 
         # Selection Method combobox
-        method_frame = ttk.Frame(spcc_frame)
-        method_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(method_frame, text="Selection Method:").pack(side=tk.LEFT)
-        self.method_var = tk.StringVar()
-        method_combo = ttk.Combobox(
-            method_frame,
-            textvariable=self.method_var,
-            values=["All", "Visible from Latitude", "Area of Interest"],
-            state="readonly",
-            width=20
-        )
-        self.method_var.set("")
-        method_combo.pack(side=tk.RIGHT)
-        tksiril.create_tooltip(method_combo, "Select how to filter the SPCC catalog: 'All' will install "
-                        "all chunks; 'Visible from Latiude' will install all chunks that are visible from the observer's "
+        method_layout = QHBoxLayout()
+        method_layout.addWidget(QLabel("Selection Method:"))
+        self.method_combo = QComboBox()
+        self.method_combo.addItems(["", "All", "Visible from Latitude", "Area of Interest"])
+        self.method_combo.setToolTip("Select how to filter the SPCC catalog: 'All' will install "
+                        "all chunks; 'Visible from Latitude' will install all chunks that are visible from the observer's "
                         "latitude above the given minimum elevation during the course of the year; 'Area "
                         "of Interest' will install chunks covering the specified area of interest")
+        method_layout.addWidget(self.method_combo)
+        spcc_layout.addLayout(method_layout)
 
-         # Buttons
-        spcc_button_frame = ttk.Frame(spcc_frame)
-        spcc_button_frame.pack(fill=tk.X, pady=5)
-
-        # Configure the frame's column weights to make buttons equal
-        spcc_button_frame.columnconfigure(0, weight=1)
-        spcc_button_frame.columnconfigure(1, weight=1)
+        # Buttons for SPCC
+        spcc_button_layout = QHBoxLayout()
 
         # Preview button for HEALpixel coverage
-        healpix_btn = ttk.Button(
-            spcc_button_frame,
-            text="Preview coverage",
-            command=self.preview_coverage,
-            style="TButton"
-        )
-        healpix_btn.grid(row=0, column=0, pady=2, sticky='ew')
-        tksiril.create_tooltip(healpix_btn, "Preview HEALpix coverage")
+        healpix_btn = QPushButton("Preview coverage")
+        healpix_btn.clicked.connect(self.preview_coverage)
+        healpix_btn.setToolTip("Preview HEALpix coverage")
+        spcc_button_layout.addWidget(healpix_btn)
 
         # Install button for SPCC
-        spcc_install_btn = ttk.Button(
-            spcc_button_frame,
-            text="Install",
-            command=self.install_spcc,
-            style="TButton"
-        )
-        spcc_install_btn.grid(row=0, column=1, pady=2, sticky='ew')
-        tksiril.create_tooltip(spcc_install_btn, "Install or update the SPCC catalog with selected parameters")
+        spcc_install_btn = QPushButton("Install")
+        spcc_install_btn.clicked.connect(self.install_spcc)
+        spcc_install_btn.setToolTip("Install or update the SPCC catalog with selected parameters")
+        spcc_button_layout.addWidget(spcc_install_btn)
+
+        spcc_layout.addLayout(spcc_button_layout)
+        main_layout.addWidget(spcc_group)
 
         # Catalog Path Selection Frame
-        catpath_frame = ttk.LabelFrame(main_frame, text="Catalog Path", padding=10)
-        catpath_frame.pack(fill=tk.X, padx=5, pady=5)
+        catpath_group = QGroupBox("Catalog Path")
+        catpath_layout = QHBoxLayout(catpath_group)
 
-        self.catalog_path_var = tk.StringVar(value=self.catalog_path or "")
-        catpath_entry = ttk.Entry(
-            catpath_frame,
-            textvariable=self.catalog_path_var,
-            width=40
+        self.catalog_path_entry = QLineEdit(self.catalog_path or "")
+        self.catalog_path_entry.setToolTip("Set the catalog installation directory")
+        catpath_layout.addWidget(self.catalog_path_entry)
+
+        browse_btn = QPushButton("Browse")
+        browse_btn.clicked.connect(self.browse_catalog)
+        catpath_layout.addWidget(browse_btn)
+
+        main_layout.addWidget(catpath_group)
+
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        close_btn.setToolTip("Close the Catalog Installer dialog")
+        main_layout.addWidget(close_btn)
+
+    def browse_catalog(self):
+        """Browse for catalog directory"""
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Select Catalog Installation Path",
+            self.catalog_path or ""
         )
-        catpath_entry.pack(side=tk.LEFT, padx=(0, 5), expand=True)
-
-        ttk.Button(
-            catpath_frame,
-            text="Browse",
-            command=self._browse_catalog,
-            style="TButton"
-        ).pack(side=tk.LEFT)
-        tksiril.create_tooltip(catpath_entry, "Set the catalog installation directory")
-
-        # Close button frame
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(pady=20)
-
-        close_btn = ttk.Button(
-            button_frame,
-            text="Close",
-            command=self.close_dialog,
-            style="TButton"
-        )
-        close_btn.pack(side=tk.LEFT)
-        tksiril.create_tooltip(close_btn, "Close the Catalog Installer dialog")
-
-    def _browse_catalog(self):
-        filename = filedialog.askdirectory(
-            title="Select Catalog Installation Path",
-            initialdir=self.catalog_path
-        )
-        if filename:
-            self.catalog_path_var.set(filename)
-
-    def close_dialog(self):
-        self.siril.disconnect()
-        if hasattr(self, 'root'):
-            self.root.quit()
-            self.root.destroy()
+        if directory:
+            self.catalog_path_entry.setText(directory)
 
     def get_pixels_from_ui(self):
+        """Get pixel list based on UI selection"""
         pixels = None
-        method = self.method_var.get()
+        method = self.method_combo.currentText()
+
         if method == "":
             pixels = []
         elif method == "Area of Interest":
-            area = self.area_var.get()
+            area = self.area_combo.currentText()
             pixels = get_area_of_interest(area)
         elif method == "Visible from Latitude":
-            lat = self.latitude_var.get()
-            min_elev = self.elevation_var.get()
-            pixels = get_visible_healpix(latitude=lat, min_elevation=min_elev)
-        else: # method == "All":
+            try:
+                lat = float(self.latitude_entry.text() or "0")
+                min_elev = float(self.elevation_entry.text() or "0")
+                pixels = get_visible_healpix(latitude=lat, min_elevation=min_elev)
+            except ValueError:
+                QMessageBox.warning(self, "Input Error", "Please enter valid latitude and elevation values")
+                return []
+        else:  # method == "All":
             pixels = list(range(48))
         return pixels
 
     def decompress_with_progress(self, bz2_path, decompressed_path):
+        """Decompress bz2 file with progress updates"""
         print(f"Decompressing {bz2_path} to {decompressed_path}...")
 
-        # Get the total size of the compressed file for progress calculation
         total_size = os.path.getsize(bz2_path)
-        processed_size = 0  # Tracks how much of the file has been read
+        processed_size = 0
 
         with bz2.BZ2File(bz2_path, 'rb') as f_in, open(decompressed_path, 'wb') as f_out:
             while True:
-                chunk = f_in.read(8192)  # Read in chunks
-                if not chunk:  # Stop when no more data is available
+                chunk = f_in.read(8192)
+                if not chunk:
                     break
-                f_out.write(chunk)  # Write the chunk to the output file
-                processed_size += 8192  # Update the processed size
+                f_out.write(chunk)
+                processed_size += 8192
                 processed_size = min(processed_size, total_size)
 
-                # Calculate progress percentage and display it
                 progress = processed_size / total_size
                 if progress > 0.99:
                     self.siril.update_progress("Decompressing... (nearly done!)", progress)
@@ -297,34 +703,34 @@ class SirilCatInstallerInterface:
         self.siril.reset_progress()
 
     def verify_sha256sum(self, bz2_path, sha256sum_path):
-        # Read the expected SHA256 checksum from the .sha256sum file
+        """Verify SHA256 checksum"""
         with open(sha256sum_path, 'r') as f:
             expected_checksum = f.read().split()[0]
 
-        # Calculate the SHA256 checksum of the downloaded .bz2 file
         sha256_hash = hashlib.sha256()
         with open(bz2_path, 'rb') as f:
             for chunk in iter(lambda: f.read(8192), b""):
                 sha256_hash.update(chunk)
         actual_checksum = sha256_hash.hexdigest()
 
-        # Verify the checksum
         if actual_checksum != expected_checksum:
             print(f"Checksum verification failed. Expected {expected_checksum}, got {actual_checksum}")
             return False
         else:
-            print("Checksum verfication succeeded.")
+            print("Checksum verification succeeded.")
             return True
 
     def install_astrometry(self):
-        # Confirmation dialog, as this is a large amount of data
-        proceed = messagebox.askyesno(
+        """Install astrometry catalog"""
+        reply = QMessageBox.question(
+            self,
             "Confirm Download",
             "This will download a large amount of data. Are you sure you want to proceed?",
-            icon='warning'
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
         )
 
-        if proceed:
+        if reply == QMessageBox.StandardButton.Yes:
             # URLs of the files to download
             catfile = f"siril_cat_healpix{ASTRO_INDEXLEVEL}_astro.dat.bz2"
             shasumfile = f"{catfile}.sha256sum"
@@ -332,73 +738,12 @@ class SirilCatInstallerInterface:
             sha256sum_url = f"{bz2_url}.sha256sum"
 
             # Set target dir
-            target_dir = self.catalog_path_var.get()
+            target_dir = self.catalog_path_entry.text()
 
             # Ensure the target directory exists
             os.makedirs(target_dir, exist_ok=True)
 
-            # Download the .sha256sum file
-            sha256sum_path = os.path.join(target_dir, shasumfile)
-            print(f"Downloading {sha256sum_url} to {sha256sum_path}...")
-            response = requests.get(sha256sum_url)
-            with open(sha256sum_path, 'wb') as f:
-                f.write(response.content)
-
-            # Does the compressed archive already exist? If so, check the checksum
-            # If it doesn't exist or the checksum is invalid, download again
-            bz2_path = os.path.join(target_dir, catfile)
-            if os.path.exists(bz2_path) and self.verify_sha256sum(bz2_path, sha256sum_path):
-                print("Existing archive found with valid checksum...")
-            else:
-                # Download the .bz2 file with progress reporting
-                print(f"Downloading {bz2_url} to {bz2_path}...")
-                s.download_with_progress(self.siril, bz2_url, bz2_path)
-                if not self.verify_sha256sum(bz2_path, sha256sum_path):
-                    print("Checksum verification error, unable to proceed.")
-                    return
-
-            # Determine the decompressed file path by removing the .bz2 extension
-            decompressed_filename = os.path.basename(bz2_path).rsplit('.bz2', 1)[0]
-            decompressed_path = os.path.join(target_dir, decompressed_filename)
-            # Decompress the .bz2 file
-            self.decompress_with_progress(bz2_path, decompressed_path)
-
-            # Clean up: remove the compressed archive and checksum file
-            print("Cleaning up...")
-            os.remove(bz2_path)
-            os.remove(sha256sum_path)
-
-            # Set the catalog in preferences
-            print("Setting the catalog location in Preferences->Astrometry")
-            escaped_path = decompressed_path.replace('\\', '\\\\')
-            self.siril.cmd("set", f"\"core.catalogue_gaia_astro={escaped_path}\"")
-
-            print("Installation completed successfully.")
-
-    def install_spcc(self):
-        proceed = messagebox.askyesno(
-            "Confirm Download",
-            "This will download a large amount of data. Are you sure you want to proceed?",
-            icon='warning'
-        )
-
-        if proceed:
-            pixels = self.get_pixels_from_ui()
-            print(f"Installing the following Level 1 HEALpixels: {pixels}")
-            chunks = []
-            error = 0
-            # Set target dir
-            target_dir = os.path.join(self.catalog_path_var.get(), f"siril_cat{SPCC_CHUNKLEVEL}_healpix{SPCC_INDEXLEVEL}_xpsamp")
-            # Ensure the target directory exists
-            os.makedirs(target_dir, exist_ok=True)
-
-            for pixel in pixels:
-                catfile = f"siril_cat{SPCC_CHUNKLEVEL}_healpix{SPCC_INDEXLEVEL}_xpsamp_{pixel}.dat.bz2"
-                chunks.append(catfile)
-                shasumfile = f"{catfile}.sha256sum"
-                bz2_url = f"https://zenodo.org/records/{SPCC_RECORD}/files/{catfile}"
-                sha256sum_url = f"{bz2_url}.sha256sum"
-
+            try:
                 # Download the .sha256sum file
                 sha256sum_path = os.path.join(target_dir, shasumfile)
                 print(f"Downloading {sha256sum_url} to {sha256sum_path}...")
@@ -406,84 +751,144 @@ class SirilCatInstallerInterface:
                 with open(sha256sum_path, 'wb') as f:
                     f.write(response.content)
 
-                # Does the compressed archive already exist? If so, check the checksum
-                # If it doesn't exist or the checksum is invalid, download again
+                # Check if compressed archive exists and verify checksum
                 bz2_path = os.path.join(target_dir, catfile)
                 if os.path.exists(bz2_path) and self.verify_sha256sum(bz2_path, sha256sum_path):
                     print("Existing archive found with valid checksum...")
                 else:
                     # Download the .bz2 file with progress reporting
                     print(f"Downloading {bz2_url} to {bz2_path}...")
-                    try:
-                        download_successful = s.download_with_progress(self.siril, bz2_url, bz2_path)
-                    except RuntimeError as e:
-                        self.siril.log(f"Download error: {e}")
-                        self.siril.reset_progress()
-                        raise
-                        
+                    s.download_with_progress(self.siril, bz2_url, bz2_path)
                     if not self.verify_sha256sum(bz2_path, sha256sum_path):
-                        print(f"Checksum verification error for {bz2_path}, skipping HEALpixel {pixel}.", file=sys.stderr)
-                        error = 1
-                        continue
+                        print("Checksum verification error, unable to proceed.")
+                        return
 
-                # Determine the decompressed file path by removing the .bz2 extension
+                # Decompress the .bz2 file
                 decompressed_filename = os.path.basename(bz2_path).rsplit('.bz2', 1)[0]
                 decompressed_path = os.path.join(target_dir, decompressed_filename)
-                # Decompress the .bz2 file
                 self.decompress_with_progress(bz2_path, decompressed_path)
 
-                # Clean up: remove the compressed archive and checksum file
+                # Clean up
                 print("Cleaning up...")
                 os.remove(bz2_path)
                 os.remove(sha256sum_path)
-                print(f"{decompressed_path} installed successfully.")
 
-            print("Setting the catalog location in Preferences->Astrometry")
-            escaped_dir = target_dir.replace('\\', '\\\\')
-            self.siril.cmd("set", f"\"core.catalogue_gaia_photo={escaped_dir}\"")
+                # Set the catalog in preferences
+                print("Setting the catalog location in Preferences->Astrometry")
+                escaped_path = decompressed_path.replace('\\', '\\\\')
+                self.siril.cmd("set", f"\"core.catalogue_gaia_astro={escaped_path}\"")
 
-            if not error:
-                print("Installation complete, all files installed successfully.")
-            else:
-                print("Installation complete but not all files installed successfully. Please review the error messages", file=sys.stderr)
-            return
+                print("Installation completed successfully.")
+                QMessageBox.information(self, "Success", "Astrometry catalog installed successfully!")
+
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Installation failed: {str(e)}")
+
+    def install_spcc(self):
+        """Install SPCC catalog"""
+        reply = QMessageBox.question(
+            self,
+            "Confirm Download",
+            "This will download a large amount of data. Are you sure you want to proceed?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            pixels = self.get_pixels_from_ui()
+            if not pixels:
+                QMessageBox.warning(self, "Selection Error", "No pixels selected. Please check your selection method and parameters.")
+                return
+
+            print(f"Installing the following Level 1 HEALpixels: {pixels}")
+            error = 0
+
+            # Set target dir
+            target_dir = os.path.join(self.catalog_path_entry.text(), f"siril_cat{SPCC_CHUNKLEVEL}_healpix{SPCC_INDEXLEVEL}_xpsamp")
+            os.makedirs(target_dir, exist_ok=True)
+
+            try:
+                for pixel in pixels:
+                    catfile = f"siril_cat{SPCC_CHUNKLEVEL}_healpix{SPCC_INDEXLEVEL}_xpsamp_{pixel}.dat.bz2"
+                    shasumfile = f"{catfile}.sha256sum"
+                    bz2_url = f"https://zenodo.org/records/{SPCC_RECORD}/files/{catfile}"
+                    sha256sum_url = f"{bz2_url}.sha256sum"
+
+                    # Download the .sha256sum file
+                    sha256sum_path = os.path.join(target_dir, shasumfile)
+                    print(f"Downloading {sha256sum_url} to {sha256sum_path}...")
+                    response = requests.get(sha256sum_url)
+                    with open(sha256sum_path, 'wb') as f:
+                        f.write(response.content)
+
+                    # Check if compressed archive exists and verify checksum
+                    bz2_path = os.path.join(target_dir, catfile)
+                    if os.path.exists(bz2_path) and self.verify_sha256sum(bz2_path, sha256sum_path):
+                        print("Existing archive found with valid checksum...")
+                    else:
+                        # Download the .bz2 file with progress reporting
+                        print(f"Downloading {bz2_url} to {bz2_path}...")
+                        try:
+                            s.download_with_progress(self.siril, bz2_url, bz2_path)
+                        except RuntimeError as e:
+                            self.siril.log(f"Download error: {e}")
+                            self.siril.reset_progress()
+                            raise
+
+                        if not self.verify_sha256sum(bz2_path, sha256sum_path):
+                            print(f"Checksum verification error for {bz2_path}, skipping HEALpixel {pixel}.")
+                            error = 1
+                            continue
+
+                    # Decompress the .bz2 file
+                    decompressed_filename = os.path.basename(bz2_path).rsplit('.bz2', 1)[0]
+                    decompressed_path = os.path.join(target_dir, decompressed_filename)
+                    self.decompress_with_progress(bz2_path, decompressed_path)
+
+                    # Clean up
+                    print("Cleaning up...")
+                    os.remove(bz2_path)
+                    os.remove(sha256sum_path)
+                    print(f"{decompressed_path} installed successfully.")
+
+                print("Setting the catalog location in Preferences->Astrometry")
+                escaped_dir = target_dir.replace('\\', '\\\\')
+                self.siril.cmd("set", f"\"core.catalogue_gaia_photo={escaped_dir}\"")
+
+                if not error:
+                    print("Installation complete, all files installed successfully.")
+                    QMessageBox.information(self, "Success", "SPCC catalog installed successfully!")
+                else:
+                    print("Installation complete but not all files installed successfully.")
+                    QMessageBox.warning(self, "Partial Success", "Installation complete but not all files installed successfully. Please review the error messages.")
+
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Installation failed: {str(e)}")
 
     def preview_coverage(self):
+        """Preview HEALpix coverage using VisPy visualization"""
         pixels = self.get_pixels_from_ui()
-        if pixels == []:
+        if not pixels:
             print("Warning: no catalog chunks selected. Set the selection method.")
+            QMessageBox.warning(self, "Selection Warning", "No catalog chunks selected. Set the selection method.")
+            return
+
+        # Get constellation file path
         cat_path = os.path.join(self.siril.get_siril_systemdatadir(), "catalogue", "constellations.csv")
-        plot_visible_pixels(pixels, cat_path)
-        return
+
+        # Create and show the visualization dialog
+        dialog = SkyVisualizationDialog(pixels, cat_path, self)
+        dialog.show()
+
+    def closeEvent(self, event):
+        """Handle window close event"""
+        self.siril.disconnect()
+        event.accept()
 
 def calculate_colatitude(latitude_deg, elevation_deg):
     """
     Compute the most extreme celestial colatitude observable above the given minimum elevation
     from an observer's terrestrial latitude.
-
-    The Earth's axial tilt is taken into account. For observers near the equator,
-    this function correctly handles cases where regions near both poles may not meet
-    the minimum elevation requirement.
-
-    Parameters:
-    -----------
-    latitude_deg : float
-        Observer's latitude in degrees
-    elevation_deg : float
-        Minimum elevation angle in degrees
-
-    Returns:
-    --------
-    colatitude_rad : float
-        The colatitude in radians from the primary pole
-    exclusion_colatitude_rad_north : float or None
-        The colatitude in radians from the north pole for regions that never
-        reach minimum elevation. None if all northern regions can potentially
-        reach minimum elevation.
-    exclusion_colatitude_rad_south : float or None
-        The colatitude in radians from the south pole for regions that never
-        reach minimum elevation. None if all southern regions can potentially
-        reach minimum elevation.
     """
     # Earth's axial tilt in radians
     epsilon = math.radians(23.44)
@@ -527,20 +932,7 @@ def calculate_colatitude(latitude_deg, elevation_deg):
 
 def get_visible_healpix(latitude, min_elevation):
     """
-    Compute HEALPix level 1 pixel numbers visible above minimum elevation,
-    accounting for regions near either pole that may never reach the minimum elevation.
-
-    Parameters:
-    -----------
-    latitude : float
-        Observer's latitude in degrees
-    min_elevation : float
-        Minimum elevation angle in degrees
-
-    Returns:
-    --------
-    pixels : list
-        List of unique NEST HEALPix pixel numbers for level 1.
+    Compute HEALPix level 1 pixel numbers visible above minimum elevation.
     """
     colatitude, excl_north, excl_south = calculate_colatitude(latitude, min_elevation)
     nside = 2
@@ -575,159 +967,20 @@ def get_visible_healpix(latitude, min_elevation):
         visible_pixels = np.intersect1d(visible_pixels, south_visible)
 
     return visible_pixels.tolist()
+
 def get_area_of_interest(area):
-    if area == "Galaxy Season":
-        return [5,8,9,10,24,25,26,27]
-    elif area == "Magellanic Clouds":
-        return [32,33,36,38]
-    elif area == "Summer Triangle":
-        return [9,12,13,14,15,29,31]
-    elif area == "Milky Way":
-        return [2,3,12,13,14,15,28,29,30,31,36,37,38,39,40,41,42,46]
-    elif area == "Orion to Taurus":
-        return [0,1,6,20,21,22,23]
-    else:
-        return []
-
-def plot_visible_pixels(visible_pixels, filename, nside=2):
-    """
-    Create a visualization of the visible pixels using a Mollweide projection
-    by running the plotting logic in a subprocess (to avoid a clash with the
-    matplotlib and TKinter main loops)
-
-    Parameters:
-    -----------
-    visible_pixels : np.ndarray
-        Array of visible HEALPix pixel indices
-    nside : int, optional
-        HEALPix nside parameter.
-    """
-    # Convert visible_pixels to a string representation
-    visible_pixels_str = ', '.join(map(str, visible_pixels))
-
-    # Define the script to be executed in the subprocess
-    script = f"""
-import csv
-import numpy as np
-import matplotlib.pyplot as plt
-from astropy_healpix import HEALPix
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-from astropy.coordinates import get_sun, SkyCoord
-from astropy.time import Time
-
-def sphtoc(lon, lat, r = 1):
-    x = r * np.cos(lat) * np.cos(lon)
-    y = r * np.cos(lat) * np.sin(lon)
-    z = r * np.sin(lat)
-    return x, y, z
-
-def pp_arcs(arcs):
-    cartesian_data = []
-    for ra1, dec1, ra2, dec2 in arcs:
-        # Convert RA and Dec to radians
-        ra1_rad, dec1_rad = 2 * np.pi - np.radians(ra1), np.radians(dec1)
-        ra2_rad, dec2_rad = 2 * np.pi - np.radians(ra2), np.radians(dec2)
-        x1, y1, z1 = sphtoc(ra1_rad, dec1_rad)
-        x2, y2, z2 = sphtoc(ra2_rad, dec2_rad)
-        cartesian_data.append([x1, y1, z1, x2, y2, z2])
-    return np.array(cartesian_data)
-
-def upd_vis_cons(ax, fig, ppdata):
-    def on_view_change(event=None):
-        # Clear the existing constellation lines
-        for line in ax.lines:
-            line.remove()
-        camera_direction = get_view_dir(ax)
-        start_points = ppdata[:, :3]
-        end_points = ppdata[:, 3:]
-        visible_mask_start = vis_from_cam(camera_direction, start_points)
-        visible_mask_end = vis_from_cam(camera_direction, end_points)
-        visible_mask = visible_mask_start | visible_mask_end
-        visible_arcs = ppdata[visible_mask]
-        for arc in visible_arcs:
-            x1, y1, z1, x2, y2, z2 = arc
-            ax.plot([x1, x2], [y1, y2], [z1, z2], color='black', linewidth=0.5, alpha=1.0, zorder=4)
-        # Celestial equator visibility
-        lon_eq = np.linspace(0, 2 * np.pi, 100)
-        lat_eq = np.zeros_like(lon_eq)
-        x_eq, y_eq, z_eq = sphtoc(lon_eq, lat_eq)
-        visible_eq_mask = vis_from_cam(camera_direction, np.column_stack((x_eq, y_eq, z_eq)))
-        visible_indices = np.where(visible_eq_mask)[0]
-        if len(visible_indices) > 0:
-            segments = np.split(visible_indices, np.where(np.diff(visible_indices) != 1)[0] + 1)
-            for segment in segments:
-                ax.plot(x_eq[segment], y_eq[segment], z_eq[segment], 'r', linewidth=0.5, label='Celestial Equator', zorder=4)
-        x_ncp, y_ncp, z_ncp = sphtoc(0, np.pi/2, 1.1)
-        fig.canvas.draw_idle()
-    fig.canvas.mpl_connect('motion_notify_event', on_view_change)
-    on_view_change()
-
-def vis_from_cam(camera_direction, points):
-    return np.dot(points, camera_direction) > 0
-
-def get_view_dir(ax):
-    x, y, z = sphtoc(np.radians(ax.azim), np.radians(ax.elev))
-    return np.array([x, y, z])
-
-plt.close('all')
-visible_pixels = np.array([{visible_pixels_str}])
-nside_grid = 2
-nside_fine = 8
-nside_ratio = nside_fine // nside_grid
-pixels_per_coarse = nside_ratio * nside_ratio
-hp = HEALPix(nside=nside_fine, order = 'nested', frame = 'icrs')
-boundaries = hp.boundaries_skycoord(range(hp.npix), step = 10)
-fig = plt.figure(figsize=(5, 5))
-ax = fig.add_subplot(111, projection='3d')
-panel = []
-col = []
-for i, boundary in enumerate(boundaries):
-    lon = boundary.ra.radian
-    lat = boundary.dec.radian
-    lon = np.append(lon, lon[0])
-    lat = np.append(lat, lat[0])
-    lon = 2 * np.pi - lon
-    x, y, z = sphtoc(lon, lat)
-    panel.append(np.column_stack((x, y, z)))
-    containing_grid_pixel = i // pixels_per_coarse
-    col.append('gold' if (containing_grid_pixel in visible_pixels) else 'midnightblue')
-ax.add_collection(Poly3DCollection(panel, facecolors=col, edgecolors='none', alpha=0.9, zorder=1))
-arcs = []
-with open(r'{filename}', 'r') as csvfile:
-    next(csvfile)
-    reader = csv.reader(csvfile)
-    for row in reader:
-        arcs.append(tuple(map(float, row)))
-ppdata = pp_arcs(arcs)
-date = Time.now()
-sun_coords = get_sun(date)
-ra_as = (sun_coords.ra.deg + 180) % 360
-dec_as = -sun_coords.dec.deg
-def get_roll(elev, azim):
-    if abs(elev) > 90:
-        return 180
-    return 0
-roll = get_roll(ra_as, dec_as)
-ax.view_init(elev=ra_as, azim=dec_as, roll=roll)
-ax.set_axis_off()
-ax.set_xlim([-1,1])
-ax.set_ylim([-1,1])
-ax.set_zlim([-1,1])
-ax.set_aspect('equal')
-plt.tight_layout()
-upd_vis_cons(ax, fig, ppdata)
-plt.show()
-"""
-
-    # Execute the script in a subprocess
-    process = subprocess.Popen([sys.executable, "-c", script])
-
-    # Check if the subprocess encountered an error starting up
-    if process.errors is not None:
-        print("Subprocess encountered an error:")
-        print(process.errors)
+    """Get HEALpix pixels for predefined areas of interest"""
+    area_map = {
+        "Galaxy Season": [5,8,9,10,24,25,26,27],
+        "Magellanic Clouds": [32,33,36,38],
+        "Summer Triangle": [9,12,13,14,15,29,31],
+        "Milky Way": [2,3,12,13,14,15,28,29,30,31,36,37,38,39,40,41,42,46],
+        "Orion to Taurus": [0,1,6,20,21,22,23]
+    }
+    return area_map.get(area, [])
 
 def fetch_and_store_chunk(pixel, url_base, target_path):
+    """Fetch and store a single catalog chunk"""
     # Create the file name and sha256sum file name using the provided pixel
     file_name = f"siril_cat2_healpix8_xpsamp_{pixel}.dat.bz2"
     sha256_file_name = f"{file_name}.sha256sum"
@@ -793,15 +1046,21 @@ def fetch_and_store_chunk(pixel, url_base, target_path):
     print(f"Decompression successful for pixel {pixel}.")
 
 def process_pixels(pixels, url_base, target_path):
+    """Process multiple pixels"""
     for pixel in pixels:
         fetch_and_store_chunk(pixel, url_base, target_path)
 
 def main():
+    """Main entry point"""
     try:
-        # GUI mode
-        root = ThemedTk()
-        app = SirilCatInstallerInterface(root)
-        root.mainloop()
+        app = QApplication(sys.argv)
+        app.setStyle('Fusion')
+        app.setApplicationName("Siril Catalog Installer")
+        
+        window = SirilCatInstallerInterface()
+        window.show()
+        
+        sys.exit(app.exec())
     except Exception as e:
         print(f"Error initializing application: {str(e)}")
         sys.exit(1)
