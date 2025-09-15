@@ -1,59 +1,96 @@
 # (c) Cyril Richard from Franklin Marek SAS code (2025)
-# NBtoRGBstars for Siril - Ported from PyQt to Siril/tkinter
+# NBtoRGBstars for Siril - Ported from tkinter to PyQt6
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 1.0.4
-#
+# Version 2.0.0
 
 import sirilpy as s
-s.ensure_installed("ttkthemes", "pillow", "numpy", "astropy")
+s.ensure_installed("PyQt6", "pillow", "numpy", "astropy")
 
 import os
 import sys
-import tkinter as tk
-from tkinter import ttk, messagebox
-from ttkthemes import ThemedTk
-from sirilpy import tksiril
 import numpy as np
-from PIL import Image, ImageTk
+from PIL import Image
 from astropy.io import fits
 
-filetypes = []
-if sys.platform.startswith("linux") and s.check_module_version(">=0.6.0"):
-    import sirilpy.tkfilebrowser as filedialog
-    filetypes = [("FITS files", "*.fits|*.fit|*.fts")]
-else:
-    from tkinter import filedialog
-    filetypes = [("FITS files", "*.fits *.fit *.fts")]
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+                            QHBoxLayout, QLabel, QSlider, QCheckBox, QPushButton,
+                            QGroupBox, QSplitter, QScrollArea, QFrame, QFileDialog,
+                            QMessageBox)
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QFont, QPixmap, QImage, QPainter
 
-VERSION = "1.0.4"
+VERSION = "2.0.0"
 # 1.0.1 CR: using tkfilebrowser for linux OS
 # 1.0.2 CR: fixing script due to API changes
 # 1.0.3 CM: remove unnecessary import
 # 1.0.4 CR: fixing flipping issue
+# 2.0.0 CR: using PyQt6 instead of tkinter and adding a Clear images button
 
-class NBtoRGBstarsInterface:
-    def __init__(self, root):
-        self.root = root
-        self.root.title(f"NB to RGB Stars - v{VERSION}")
-        self.root.resizable(True, True)
+class ImageLabel(QLabel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(1, 1)
+        self.setStyleSheet("background-color: black;")
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.original_pixmap = None
+        self.scale_factor = 1.0
+        self.parent_interface = None
+
+    def set_parent_interface(self, parent_interface):
+        self.parent_interface = parent_interface
+
+    def set_image(self, pixmap):
+        self.original_pixmap = pixmap
+        self.update_display()
+
+    def update_display(self):
+        if self.original_pixmap:
+            scaled_pixmap = self.original_pixmap.scaled(
+                int(self.original_pixmap.width() * self.scale_factor),
+                int(self.original_pixmap.height() * self.scale_factor),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.setPixmap(scaled_pixmap)
+
+    def set_scale_factor(self, factor):
+        self.scale_factor = factor
+        self.update_display()
+
+    def wheelEvent(self, event):
+        """Handle mouse wheel for zooming"""
+        if self.parent_interface and self.original_pixmap:
+            # Get wheel delta (positive = zoom in, negative = zoom out)
+            delta = event.angleDelta().y()
+            
+            if delta > 0:
+                self.parent_interface.zoom_in()
+            elif delta < 0:
+                self.parent_interface.zoom_out()
         
-        self.style = tksiril.standard_style()
+        super().wheelEvent(event)
+
+class NBtoRGBstarsInterface(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(f"NB to RGB Stars - v{VERSION}")
+        self.setGeometry(100, 100, 1200, 800)
         
         self.siril = s.SirilInterface()
         
         try:
             self.siril.connect()
-        except s.SirilConnectionError as e:
-            self.siril.error_messagebox("Failed to connect to Siril")
-            self.close_dialog()
+        except s.SirilConnectionError:
+            self.show_error_message("Failed to connect to Siril")
+            self.close()
             return
             
         try:
             self.siril.cmd("requires", "1.3.6")
         except s.CommandError:
-            messagebox.showerror("Error", "Siril version requirement not met")
-            self.close_dialog()
+            self.show_error_message("Siril version requirement not met")
+            self.close()
             return
         
         # Initialize image variables
@@ -76,304 +113,251 @@ class NBtoRGBstarsInterface:
         
         # Set up zoom
         self.zoom_factor = 1.0
-        self.preview_image = None
         
         # Create the UI
-        tksiril.match_theme_to_siril(self.root, self.siril)
-        self.create_widgets()
+        self.init_ui()
     
-    def create_widgets(self):
-        # Main frame with paned window to allow resizing
-        main_paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
-        main_paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+    def init_ui(self):
+        # Central widget
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
         
-        # Left frame for controls
-        left_frame = ttk.Frame(main_paned, width=300)
-        main_paned.add(left_frame, weight=1)
+        # Main layout with splitter
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(5, 5, 5, 5)
+        
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        main_layout.addWidget(splitter)
+        
+        # Left panel for controls
+        left_panel = self.create_left_panel()
+        splitter.addWidget(left_panel)
+        
+        # Right panel for image preview
+        right_panel = self.create_right_panel()
+        splitter.addWidget(right_panel)
+        
+        # Set splitter proportions
+        splitter.setSizes([400, 800])
+    
+    def create_left_panel(self):
+        left_widget = QWidget()
+        left_widget.setFixedWidth(400)
+        layout = QVBoxLayout(left_widget)
+        layout.setSpacing(10)
         
         # Title
-        title_label = ttk.Label(
-            left_frame,
-            text="NB to RGB Stars",
-            style="Header.TLabel"
-        )
-        title_label.pack(pady=(0, 10))
+        title_label = QLabel("NB to RGB Stars")
+        title_font = QFont()
+        title_font.setPointSize(14)
+        title_font.setBold(True)
+        title_label.setFont(title_font)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title_label)
         
-        # Instructions box
-        instruction_frame = ttk.LabelFrame(left_frame, text="Instructions", padding=5)
-        instruction_frame.pack(fill=tk.X, padx=5, pady=5)
+        # Instructions
+        instructions_group = QGroupBox("Instructions")
+        instructions_layout = QVBoxLayout(instructions_group)
         
-        instructions = ttk.Label(
-            instruction_frame,
-            text="""
-1. Select Ha, OIII, and SII (optional) narrowband images, or an OSC stars-only image.
+        instructions_text = QLabel("""1. Select Ha, OIII, and SII (optional) narrowband images, or an OSC stars-only image.
    Note: Images must be pre-aligned on stars before processing.
 2. Adjust the Ha to OIII Ratio if needed.
 3. Preview the combined result.
-4. Send Preview to Siril.
-            """,
-            wraplength=280
-        )
-        instructions.pack(fill=tk.X, padx=5, pady=5)
+4. Send Preview to Siril.""")
+        instructions_text.setWordWrap(True)
+        instructions_layout.addWidget(instructions_text)
+        layout.addWidget(instructions_group)
         
-        # Image selection frame
-        image_select_frame = ttk.LabelFrame(left_frame, text="Image Selection", padding=5)
-        image_select_frame.pack(fill=tk.X, padx=5, pady=5)
+        # Image selection
+        image_group = QGroupBox("Image Selection")
+        image_layout = QVBoxLayout(image_group)
         
         # Ha Image
-        ha_frame = ttk.Frame(image_select_frame)
-        ha_frame.pack(fill=tk.X, pady=2)
-        
-        self.ha_button = ttk.Button(
-            ha_frame,
-            text="Select Ha Image",
-            command=lambda: self.load_image('Ha'),
-            style="TButton"
-        )
-        self.ha_button.pack(side=tk.LEFT, padx=5)
-        
-        self.ha_label = ttk.Label(ha_frame, text="No Ha image selected")
-        self.ha_label.pack(side=tk.LEFT, padx=5, fill=tk.X)
+        ha_layout = QHBoxLayout()
+        self.ha_button = QPushButton("Ha Image")
+        self.ha_button.clicked.connect(lambda: self.load_image('Ha'))
+        self.ha_label = QLabel("No Ha image selected")
+        ha_layout.addWidget(self.ha_button)
+        ha_layout.addWidget(self.ha_label)
+        image_layout.addLayout(ha_layout)
         
         # OIII Image
-        oiii_frame = ttk.Frame(image_select_frame)
-        oiii_frame.pack(fill=tk.X, pady=2)
-        
-        self.oiii_button = ttk.Button(
-            oiii_frame, 
-            text="Select OIII Image",
-            command=lambda: self.load_image('OIII'),
-            style="TButton"
-        )
-        self.oiii_button.pack(side=tk.LEFT, padx=5)
-        
-        self.oiii_label = ttk.Label(oiii_frame, text="No OIII image selected")
-        self.oiii_label.pack(side=tk.LEFT, padx=5, fill=tk.X)
+        oiii_layout = QHBoxLayout()
+        self.oiii_button = QPushButton("OIII Image")
+        self.oiii_button.clicked.connect(lambda: self.load_image('OIII'))
+        self.oiii_label = QLabel("No OIII image selected")
+        oiii_layout.addWidget(self.oiii_button)
+        oiii_layout.addWidget(self.oiii_label)
+        image_layout.addLayout(oiii_layout)
         
         # SII Image
-        sii_frame = ttk.Frame(image_select_frame)
-        sii_frame.pack(fill=tk.X, pady=2)
-        
-        self.sii_button = ttk.Button(
-            sii_frame,
-            text="Select SII Image (Optional)",
-            command=lambda: self.load_image('SII'),
-            style="TButton"
-        )
-        self.sii_button.pack(side=tk.LEFT, padx=5)
-        
-        self.sii_label = ttk.Label(sii_frame, text="No SII image selected")
-        self.sii_label.pack(side=tk.LEFT, padx=5, fill=tk.X)
+        sii_layout = QHBoxLayout()
+        self.sii_button = QPushButton("SII Image (Optional)")
+        self.sii_button.clicked.connect(lambda: self.load_image('SII'))
+        self.sii_label = QLabel("No SII image selected")
+        sii_layout.addWidget(self.sii_button)
+        sii_layout.addWidget(self.sii_label)
+        image_layout.addLayout(sii_layout)
         
         # OSC Image
-        osc_frame = ttk.Frame(image_select_frame)
-        osc_frame.pack(fill=tk.X, pady=2)
+        osc_layout = QHBoxLayout()
+        self.osc_button = QPushButton("OSC Stars Image (Optional)")
+        self.osc_button.clicked.connect(lambda: self.load_image('OSC'))
+        self.osc_label = QLabel("No OSC image selected")
+        osc_layout.addWidget(self.osc_button)
+        osc_layout.addWidget(self.osc_label)
+        image_layout.addLayout(osc_layout)
         
-        self.osc_button = ttk.Button(
-            osc_frame,
-            text="Select OSC Stars Image (Optional)",
-            command=lambda: self.load_image('OSC'),
-            style="TButton"
-        )
-        self.osc_button.pack(side=tk.LEFT, padx=5)
+        # Clear All button
+        clear_layout = QHBoxLayout()
+        self.clear_all_button = QPushButton("Clear All Images")
+        self.clear_all_button.clicked.connect(self.clear_all_images)
+        self.clear_all_button.setStyleSheet("QPushButton { background-color: #d32f2f; color: white; }")
+        clear_layout.addWidget(self.clear_all_button)
+        clear_layout.addStretch()
+        image_layout.addLayout(clear_layout)
         
-        self.osc_label = ttk.Label(osc_frame, text="No OSC image selected")
-        self.osc_label.pack(side=tk.LEFT, padx=5, fill=tk.X)
+        layout.addWidget(image_group)
         
-        # Parameters frame
-        params_frame = ttk.LabelFrame(left_frame, text="Parameters", padding=5)
-        params_frame.pack(fill=tk.X, padx=5, pady=5)
+        # Parameters
+        params_group = QGroupBox("Parameters")
+        params_layout = QVBoxLayout(params_group)
         
-        # Ha to OIII Ratio slider
-        ratio_frame = ttk.Frame(params_frame)
-        ratio_frame.pack(fill=tk.X, pady=5)
+        # Ha to OIII Ratio
+        ratio_layout = QHBoxLayout()
+        ratio_layout.addWidget(QLabel("Ha to OIII Ratio:"))
         
-        ttk.Label(ratio_frame, text="Ha to OIII Ratio:").pack(side=tk.LEFT)
+        self.ha_to_oiii_slider = QSlider(Qt.Orientation.Horizontal)
+        self.ha_to_oiii_slider.setMinimum(0)
+        self.ha_to_oiii_slider.setMaximum(100)
+        self.ha_to_oiii_slider.setValue(30)
+        self.ha_to_oiii_slider.valueChanged.connect(self.update_ratio_display)
         
-        self.ha_to_oiii_ratio = tk.DoubleVar(value=0.3)
-        self.ha_to_oiii_slider = ttk.Scale(
-            ratio_frame,
-            from_=0.0,
-            to=1.0,
-            orient=tk.HORIZONTAL,
-            variable=self.ha_to_oiii_ratio,
-            length=150
-        )
-        self.ha_to_oiii_slider.pack(side=tk.LEFT, padx=10, expand=True)
+        self.ha_to_oiii_label = QLabel("0.30")
+        self.ha_to_oiii_label.setFixedWidth(40)
         
-        self.ha_to_oiii_label = ttk.Label(
-            ratio_frame,
-            textvariable=self.ha_to_oiii_ratio,
-            width=5
-        )
-        self.ha_to_oiii_label.pack(side=tk.LEFT)
-        tksiril.create_tooltip(self.ha_to_oiii_slider, "Adjust the ratio of Ha to OIII in the green channel")
+        ratio_layout.addWidget(self.ha_to_oiii_slider)
+        ratio_layout.addWidget(self.ha_to_oiii_label)
+        params_layout.addLayout(ratio_layout)
         
-        # Star Stretch options
-        stretch_frame = ttk.Frame(params_frame)
-        stretch_frame.pack(fill=tk.X, pady=5)
+        # Star Stretch
+        self.enable_star_stretch = QCheckBox("Enable Star Stretch")
+        self.enable_star_stretch.setChecked(True)
+        self.enable_star_stretch.toggled.connect(self.toggle_stretch_controls)
+        params_layout.addWidget(self.enable_star_stretch)
         
-        self.enable_star_stretch = tk.BooleanVar(value=True)
-        self.star_stretch_checkbox = ttk.Checkbutton(
-            stretch_frame,
-            text="Enable Star Stretch",
-            variable=self.enable_star_stretch,
-            command=self.toggle_stretch_controls,
-            style="TCheckbutton"
-        )
-        self.star_stretch_checkbox.pack(anchor=tk.W)
-        tksiril.create_tooltip(self.star_stretch_checkbox, "Apply a non-linear stretch to enhance stars")
+        # Stretch Factor
+        self.stretch_layout = QHBoxLayout()
+        self.stretch_layout.addWidget(QLabel("Stretch Factor:"))
         
-        # Stretch factor slider
-        self.stretch_frame = ttk.Frame(params_frame)
-        self.stretch_frame.pack(fill=tk.X, pady=5)
+        self.stretch_slider = QSlider(Qt.Orientation.Horizontal)
+        self.stretch_slider.setMinimum(0)
+        self.stretch_slider.setMaximum(80)
+        self.stretch_slider.setValue(50)
+        self.stretch_slider.valueChanged.connect(self.update_stretch_display)
         
-        ttk.Label(self.stretch_frame, text="Stretch Factor:").pack(side=tk.LEFT)
+        self.stretch_label = QLabel("5.0")
+        self.stretch_label.setFixedWidth(40)
         
-        self.stretch_factor = tk.DoubleVar(value=5.0)
-        self.stretch_slider = ttk.Scale(
-            self.stretch_frame,
-            from_=0.0,
-            to=8.0,
-            orient=tk.HORIZONTAL,
-            variable=self.stretch_factor,
-            length=150
-        )
-        self.stretch_slider.pack(side=tk.LEFT, padx=10, expand=True)
+        self.stretch_layout.addWidget(self.stretch_slider)
+        self.stretch_layout.addWidget(self.stretch_label)
+        params_layout.addLayout(self.stretch_layout)
         
-        self.stretch_label = ttk.Label(
-            self.stretch_frame,
-            textvariable=self.stretch_factor,
-            width=5
-        )
-        self.stretch_label.pack(side=tk.LEFT)
-        tksiril.create_tooltip(self.stretch_slider, "Adjust the intensity of the star stretch")
+        # Metadata
+        self.copy_metadata = QCheckBox("Copy Metadata from Source Image")
+        self.copy_metadata.setChecked(True)
+        params_layout.addWidget(self.copy_metadata)
         
-        # Metadata options
-        metadata_frame = ttk.Frame(params_frame)
-        metadata_frame.pack(fill=tk.X, pady=5)
-
-        self.copy_metadata = tk.BooleanVar(value=True)
-        self.metadata_checkbox = ttk.Checkbutton(
-            metadata_frame,
-            text="Copy Metadata from Source Image",
-            variable=self.copy_metadata,
-            style="TCheckbutton"
-        )
-        self.metadata_checkbox.pack(anchor=tk.W)
-        tksiril.create_tooltip(self.metadata_checkbox, "Transfer FITS metadata from source image to combined result")
-
-        # Action buttons frame
-        action_frame = ttk.Frame(left_frame)
-        action_frame.pack(fill=tk.X, padx=5, pady=10)
-
-        self.preview_button = ttk.Button(
-            action_frame,
-            text="Preview Combined Image",
-            command=self.preview_combine,
-            style="TButton"
-        )
-        self.preview_button.pack(side=tk.LEFT, padx=5)
-        tksiril.create_tooltip(self.preview_button, "Generate a preview of the combined image")
+        layout.addWidget(params_group)
         
-        self.send_to_siril_button = ttk.Button(
-            action_frame,
-            text="Send Preview to Siril",
-            command=self.send_to_siril_preview,
-            style="TButton"
-        )
-        self.send_to_siril_button.pack(side=tk.LEFT, padx=5)
-        tksiril.create_tooltip(self.send_to_siril_button, "Send the combined image to Siril's preview window")
+        # Action buttons
+        buttons_layout = QHBoxLayout()
         
-        # Status label
-        self.status_label = ttk.Label(left_frame, text="")
-        self.status_label.pack(fill=tk.X, padx=5, pady=5)
+        self.preview_button = QPushButton("Preview Combined Image")
+        self.preview_button.clicked.connect(self.preview_combine)
+        buttons_layout.addWidget(self.preview_button)
+        
+        self.send_to_siril_button = QPushButton("Send Preview to Siril")
+        self.send_to_siril_button.clicked.connect(self.send_to_siril_preview)
+        buttons_layout.addWidget(self.send_to_siril_button)
+        
+        layout.addLayout(buttons_layout)
+        
+        # Status
+        self.status_label = QLabel("")
+        layout.addWidget(self.status_label)
         
         # Footer
-        footer_label = ttk.Label(
-            left_frame,
-            text="Written by Franklin Marek\nSiril port by Cyril Richard\nwww.setiastro.com",
-            justify=tk.CENTER
-        )
-        footer_label.pack(pady=10)
+        footer_label = QLabel("Written by Franklin Marek\nSiril port by Cyril Richard\nwww.setiastro.com")
+        footer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(footer_label)
         
-        # Right frame for image preview
-        right_frame = ttk.Frame(main_paned)
-        main_paned.add(right_frame, weight=3)
+        layout.addStretch()
         
-        # Zoom controls frame
-        zoom_frame = ttk.Frame(right_frame)
-        zoom_frame.pack(fill=tk.X, padx=5, pady=5)
+        return left_widget
+    
+    def create_right_panel(self):
+        right_widget = QWidget()
+        layout = QVBoxLayout(right_widget)
         
-        zoom_in_btn = ttk.Button(
-            zoom_frame,
-            text="Zoom In",
-            command=self.zoom_in,
-            style="TButton"
-        )
-        zoom_in_btn.pack(side=tk.LEFT, padx=5)
+        # Zoom controls
+        zoom_layout = QHBoxLayout()
         
-        zoom_out_btn = ttk.Button(
-            zoom_frame,
-            text="Zoom Out",
-            command=self.zoom_out,
-            style="TButton"
-        )
-        zoom_out_btn.pack(side=tk.LEFT, padx=5)
+        zoom_in_btn = QPushButton("Zoom In")
+        zoom_in_btn.clicked.connect(self.zoom_in)
+        zoom_layout.addWidget(zoom_in_btn)
         
-        fit_btn = ttk.Button(
-            zoom_frame,
-            text="Fit to Preview",
-            command=self.fit_to_preview,
-            style="TButton"
-        )
-        fit_btn.pack(side=tk.LEFT, padx=5)
+        zoom_out_btn = QPushButton("Zoom Out")
+        zoom_out_btn.clicked.connect(self.zoom_out)
+        zoom_layout.addWidget(zoom_out_btn)
         
-        # Canvas for image preview with scrollbars
-        self.canvas_frame = ttk.Frame(right_frame)
-        self.canvas_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        fit_btn = QPushButton("Fit to Preview")
+        fit_btn.clicked.connect(self.fit_to_preview)
+        zoom_layout.addWidget(fit_btn)
         
-        # Create a canvas with scrollbars
-        self.canvas = tk.Canvas(self.canvas_frame, bg="black", highlightthickness=0)
-        h_scrollbar = ttk.Scrollbar(self.canvas_frame, orient=tk.HORIZONTAL, command=self.canvas.xview)
-        v_scrollbar = ttk.Scrollbar(self.canvas_frame, orient=tk.VERTICAL, command=self.canvas.yview)
+        zoom_layout.addStretch()
+        layout.addLayout(zoom_layout)
         
-        # Configure the canvas
-        self.canvas.config(xscrollcommand=h_scrollbar.set, yscrollcommand=v_scrollbar.set)
+        # Scroll area for image
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        # Set default size
-        self.canvas.config(width=600, height=400)
+        self.image_label = ImageLabel()
+        self.image_label.set_parent_interface(self)
+        self.image_label.setText("No preview available")
+        scroll_area.setWidget(self.image_label)
         
-        # Pack the canvas and scrollbars
-        h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
-        v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        layout.addWidget(scroll_area)
         
-        # Add mouse event bindings for panning
-        self.canvas.bind("<ButtonPress-1>", self.start_pan)
-        self.canvas.bind("<B1-Motion>", self.pan_image)
-        self.canvas.bind("<MouseWheel>", self.mouse_wheel)  # Windows
-        self.canvas.bind("<Button-4>", self.mouse_wheel)    # Linux scroll up
-        self.canvas.bind("<Button-5>", self.mouse_wheel)    # Linux scroll down
-
+        return right_widget
+    
+    def update_ratio_display(self):
+        value = self.ha_to_oiii_slider.value() / 100.0
+        self.ha_to_oiii_label.setText(f"{value:.2f}")
+    
+    def update_stretch_display(self):
+        value = self.stretch_slider.value() / 10.0
+        self.stretch_label.setText(f"{value:.1f}")
+    
     def toggle_stretch_controls(self):
-        if self.enable_star_stretch.get():
-            self.stretch_frame.pack(fill=tk.X, pady=5)
-        else:
-            self.stretch_frame.pack_forget()
+        enabled = self.enable_star_stretch.isChecked()
+        self.stretch_slider.setEnabled(enabled)
+        self.stretch_label.setEnabled(enabled)
     
-    def start_pan(self, event):
-        self.canvas.scan_mark(event.x, event.y)
+    def show_error_message(self, message):
+        msg_box = QMessageBox()
+        msg_box.setIcon(QMessageBox.Icon.Critical)
+        msg_box.setWindowTitle("Error")
+        msg_box.setText(message)
+        msg_box.exec()
     
-    def pan_image(self, event):
-        self.canvas.scan_dragto(event.x, event.y, gain=1)
-    
-    def mouse_wheel(self, event):
-        # Handle zoom with mouse wheel
-        if event.num == 4 or (hasattr(event, 'delta') and event.delta > 0):
-            self.zoom_in()
-        elif event.num == 5 or (hasattr(event, 'delta') and event.delta < 0):
-            self.zoom_out()
+    def show_warning_message(self, message):
+        msg_box = QMessageBox()
+        msg_box.setIcon(QMessageBox.Icon.Warning)
+        msg_box.setWindowTitle("Warning")
+        msg_box.setText(message)
+        msg_box.exec()
     
     def load_image(self, image_type):
         """Load a FITS image from file using Astropy"""
@@ -381,11 +365,12 @@ class NBtoRGBstarsInterface:
             # Get the current working directory from Siril
             current_wd = self.siril.get_siril_wd() or os.path.expanduser("~")
             
-            # Open file dialog in Siril's current working directory
-            filename = filedialog.askopenfilename(
-                title=f"Select {image_type} FITS Image File",
-                initialdir=current_wd,
-                filetypes=filetypes
+            # Open file dialog
+            filename, _ = QFileDialog.getOpenFileName(
+                self,
+                f"Select {image_type} FITS Image File",
+                current_wd,
+                "FITS files (*.fits *.fit *.fts)"
             )
      
             if not filename:
@@ -393,7 +378,6 @@ class NBtoRGBstarsInterface:
             
             # Open the FITS file with Astropy
             with fits.open(filename) as image:
-                
                 # Get the image data
                 image_data = image[0].data
                 
@@ -410,7 +394,6 @@ class NBtoRGBstarsInterface:
                 # Debug print to understand the data structure
                 print(f"Image data shape: {image_data.shape}")
                 print(f"Image data type: {image_data.dtype}")
-
 
                 # Ensure the data is in a 2D or 3D format
                 if image_data.ndim == 2:
@@ -439,7 +422,7 @@ class NBtoRGBstarsInterface:
             if image_type == 'Ha':
                 self.ha_image = image_data
                 self.ha_filename = filename
-                self.ha_label.config(text=f"Loaded: {os.path.basename(filename)}")
+                self.ha_label.setText(f"Loaded: {os.path.basename(filename)}")
                 
                 # Store metadata from Ha image
                 if self.original_header is None:
@@ -451,7 +434,7 @@ class NBtoRGBstarsInterface:
             elif image_type == 'OIII':
                 self.oiii_image = image_data
                 self.oiii_filename = filename
-                self.oiii_label.config(text=f"Loaded: {os.path.basename(filename)}")
+                self.oiii_label.setText(f"Loaded: {os.path.basename(filename)}")
 
                 # If Ha not loaded yet, use OIII metadata as source
                 if self.original_header is None:
@@ -463,7 +446,7 @@ class NBtoRGBstarsInterface:
             elif image_type == 'SII':
                 self.sii_image = image_data
                 self.sii_filename = filename
-                self.sii_label.config(text=f"Loaded: {os.path.basename(filename)}")
+                self.sii_label.setText(f"Loaded: {os.path.basename(filename)}")
 
                 # If no metadata source yet, use SII
                 if self.original_header is None:
@@ -475,7 +458,7 @@ class NBtoRGBstarsInterface:
             elif image_type == 'OSC':
                 self.osc_image = image_data
                 self.osc_filename = filename
-                self.osc_label.config(text=f"Loaded: {os.path.basename(filename)}")
+                self.osc_label.setText(f"Loaded: {os.path.basename(filename)}")
 
                 # If no metadata source yet, use OSC
                 if self.original_header is None:
@@ -484,31 +467,67 @@ class NBtoRGBstarsInterface:
                     self.bit_depth = "32-bit"
                     self.is_mono = is_mono
             
-            self.status_label.config(text=f"{image_type} FITS image loaded successfully")
+            self.status_label.setText(f"{image_type} FITS image loaded successfully")
         
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to load {image_type} FITS image: {str(e)}")
+            self.show_error_message(f"Failed to load {image_type} FITS image: {str(e)}")
             print(f"Error loading {image_type} FITS image: {str(e)}")
-            # Include the traceback for more detailed error information
             import traceback
             traceback.print_exc()
+    
+    def clear_all_images(self):
+        """Clear all loaded images and reset the interface"""
+        # Clear all image data
+        self.ha_image = None
+        self.oiii_image = None
+        self.sii_image = None
+        self.osc_image = None
+        self.combined_image = None
+        
+        # Clear filenames
+        self.ha_filename = None
+        self.oiii_filename = None
+        self.sii_filename = None
+        self.osc_filename = None
+        
+        # Clear metadata
+        self.original_header = None
+        self.original_header_string = None
+        self.bit_depth = "Unknown"
+        self.is_mono = False
+        
+        # Reset labels
+        self.ha_label.setText("No Ha image selected")
+        self.oiii_label.setText("No OIII image selected")
+        self.sii_label.setText("No SII image selected")
+        self.osc_label.setText("No OSC image selected")
+        
+        # Clear preview
+        self.image_label.clear()
+        self.image_label.setText("No preview available")
+        
+        # Reset zoom
+        self.zoom_factor = 1.0
+        
+        # Update status
+        self.status_label.setText("All images cleared")
     
     def preview_combine(self):
         """Generate a preview of the combined image"""
         # Check if required images are loaded
         if not ((self.ha_image is not None and self.oiii_image is not None) or (self.osc_image is not None)):
-            messagebox.showwarning("Missing Images", "Please load Ha and OIII images, or an OSC image")
+            self.show_warning_message("Please load Ha and OIII images, or an OSC image")
             return
         
         # Update status
-        self.status_label.config(text="Processing image... Please wait.")
-        self.root.update_idletasks()
+        self.status_label.setText("Processing image... Please wait.")
+        QApplication.processEvents()
         
         try:
             # Get parameters
-            ha_to_oiii_ratio = self.ha_to_oiii_ratio.get()
-            enable_star_stretch = self.enable_star_stretch.get()
-            stretch_factor = self.stretch_factor.get()
+            ha_to_oiii_ratio = self.ha_to_oiii_slider.value() / 100.0
+            enable_star_stretch = self.enable_star_stretch.isChecked()
+            stretch_factor = self.stretch_slider.value() / 10.0
             
             # Process the image
             combined_image = self.process_image(
@@ -528,11 +547,11 @@ class NBtoRGBstarsInterface:
             self.update_preview(combined_image)
             
             # Update status
-            self.status_label.config(text="Preview generated successfully")
+            self.status_label.setText("Preview generated successfully")
         
         except Exception as e:
-            messagebox.showerror("Processing Error", f"Error processing image: {str(e)}")
-            self.status_label.config(text=f"Error: {str(e)}")
+            self.show_error_message(f"Error processing image: {str(e)}")
+            self.status_label.setText(f"Error: {str(e)}")
     
     def process_image(self, ha_image, oiii_image, sii_image, osc_image, ha_to_oiii_ratio, enable_star_stretch, stretch_factor):
         """Process the images to create a combined RGB image"""
@@ -588,7 +607,7 @@ class NBtoRGBstarsInterface:
         g_combined = np.clip(g_combined, 0, 1)
         b_combined = np.clip(b_combined, 0, 1)
         
-        # Stack channels to create RGB image - tout en float32 pour le traitement
+        # Stack channels to create RGB image
         combined_image = np.stack((r_combined, g_combined, b_combined), axis=-1)
         
         # Apply star stretch if enabled
@@ -635,77 +654,62 @@ class NBtoRGBstarsInterface:
         if image is None:
             return
         
-        # Flip the image for display purposes only (FITS convention vs display convention)
+        # Flip the image for display purposes only
         display_image = np.flipud(image)
             
         # Convert to 8-bit for display
         preview_image = (display_image * 255).astype(np.uint8)
         
-        # Create PIL image
-        pil_image = Image.fromarray(preview_image)
+        # Create QImage
+        height, width, channels = preview_image.shape
+        bytes_per_line = channels * width
+        q_image = QImage(preview_image.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
         
-        # Store original size
-        self.original_width, self.original_height = pil_image.size
+        # Convert to QPixmap
+        pixmap = QPixmap.fromImage(q_image)
         
-        # Apply zoom
-        zoomed_width = int(self.original_width * self.zoom_factor)
-        zoomed_height = int(self.original_height * self.zoom_factor)
+        # Set the image in the label
+        self.image_label.set_image(pixmap)
         
-        if self.zoom_factor != 1.0:
-            pil_image = pil_image.resize((zoomed_width, zoomed_height), Image.LANCZOS)
-        
-        # Convert to PhotoImage
-        self.preview_image = ImageTk.PhotoImage(pil_image)
-        
-        # Clear previous image
-        self.canvas.delete("all")
-        
-        # Create image on canvas
-        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.preview_image)
-        
-        # Configure scrollregion
-        self.canvas.config(scrollregion=(0, 0, zoomed_width, zoomed_height))
-        
-        # Force update of the preview
-        self.root.update_idletasks()
+        # Store original dimensions for zoom calculations
+        self.original_width = width
+        self.original_height = height
     
     def zoom_in(self):
         """Increase zoom level"""
         if self.zoom_factor < 20.0:
             self.zoom_factor *= 1.25
-            if self.combined_image is not None:
-                self.update_preview(self.combined_image)
+            self.image_label.set_scale_factor(self.zoom_factor)
     
     def zoom_out(self):
         """Decrease zoom level"""
         if self.zoom_factor > 0.1:
             self.zoom_factor /= 1.25
-            if self.combined_image is not None:
-                self.update_preview(self.combined_image)
+            self.image_label.set_scale_factor(self.zoom_factor)
     
     def fit_to_preview(self):
         """Fit image to preview window"""
-        if self.combined_image is None:
+        if self.combined_image is None or not hasattr(self, 'original_width'):
             return
             
-        # Get canvas dimensions
-        canvas_width = self.canvas.winfo_width()
-        canvas_height = self.canvas.winfo_height()
+        # Get available space
+        available_width = self.image_label.parent().width() - 20
+        available_height = self.image_label.parent().height() - 20
         
         # Calculate zoom factor to fit
-        width_ratio = canvas_width / self.original_width
-        height_ratio = canvas_height / self.original_height
+        width_ratio = available_width / self.original_width
+        height_ratio = available_height / self.original_height
         
         # Use the smaller ratio to ensure image fits completely
-        self.zoom_factor = min(width_ratio, height_ratio)
+        self.zoom_factor = min(width_ratio, height_ratio, 1.0)
         
         # Update preview
-        self.update_preview(self.combined_image)
+        self.image_label.set_scale_factor(self.zoom_factor)
     
     def send_to_siril_preview(self):
         """Send the combined image to Siril's preview window directly"""
         if self.combined_image is None:
-            messagebox.showwarning("No Image", "No combined image to send. Please generate a preview first.")
+            self.show_warning_message("No combined image to send. Please generate a preview first.")
             return
         
         try:
@@ -723,11 +727,9 @@ class NBtoRGBstarsInterface:
             print(f"Output image data type: {combined_data.dtype}")
             
             # Create an empty image with the correct dimensions
-            # Using cmd to create a new image with 3 channels
             self.siril.cmd("new", f"{width}", f"{height}", "3", "RGB")
 
             # Transpose the image back to planar format (channels, height, width)
-            # since Siril expects images in this format
             siril_image_data = np.transpose(combined_data, (2, 0, 1))
             siril_image_data = np.ascontiguousarray(siril_image_data)
 
@@ -738,43 +740,46 @@ class NBtoRGBstarsInterface:
                     self.siril.set_image_pixeldata(siril_image_data)
                     
                     # Apply metadata if enabled and available
-                    if self.copy_metadata.get() and self.original_header_string is not None:
-                        # Copy the metadata from the source image
+                    if self.copy_metadata.isChecked() and self.original_header_string is not None:
                         try:
                             self.siril.set_image_metadata_from_header_string(self.original_header_string)
-                            self.status_label.config(text=f"Image with metadata sent to Siril preview")
+                            self.status_label.setText("Image with metadata sent to Siril preview")
                             self.siril.log("Metadata copied from source image")
                         except Exception as metadata_err:
-                            self.status_label.config(text="Image sent, but metadata copy failed")
+                            self.status_label.setText("Image sent, but metadata copy failed")
                             print(f"Metadata copy error: {str(metadata_err)}")
                     else:
-                        # Update status
-                        self.status_label.config(text=f"Image sent to Siril preview window")
+                        self.status_label.setText("Image sent to Siril preview window")
                     
                     # log to Siril console
-                    self.siril.log(f"NBtoRGB stars combined image loaded in Siril preview")
+                    self.siril.log("NBtoRGB stars combined image loaded in Siril preview")
                 
                 except Exception as e:
-                    print(f"Error in apply_changes: {str(e)}")
+                    print(f"Error in send_to_siril_preview: {str(e)}")
 
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to apply image to Siril: {str(e)}")
-            self.status_label.config(text=f"Error: {str(e)}")
+            self.show_error_message(f"Failed to apply image to Siril: {str(e)}")
+            self.status_label.setText(f"Error: {str(e)}")
             import traceback
             traceback.print_exc()
-    
-    def close_dialog(self):
-        """Close the dialog"""
-        
-        if hasattr(self, 'root'):
-            self.root.quit()
-            self.root.destroy()
 
 def main():
     try:
-        root = ThemedTk()
-        app = NBtoRGBstarsInterface(root)
-        root.mainloop()
+        # Create Siril interface first to determine mode
+        siril = s.SirilInterface()
+        
+        if siril.is_cli():
+            print("CLI mode not supported for this script")
+            return
+        
+        # GUI mode
+        app = QApplication(sys.argv)
+        app.setStyle('Fusion')
+        app.setApplicationName("NBtoRGBstars")
+        window = NBtoRGBstarsInterface()
+        window.show()
+        sys.exit(app.exec())
+            
     except Exception as e:
         print(f"Error initializing application: {str(e)}")
         sys.exit(1)

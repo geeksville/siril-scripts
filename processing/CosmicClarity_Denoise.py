@@ -1,4 +1,4 @@
-# (c) Adrian Knagg-Baugh 2024
+# (c) Adrian Knagg-Baugh 2024-2025
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # Contact: report issues with this script at https://gitlab.com/free-astro/siril-scripts
@@ -9,7 +9,7 @@
 # *MUST* reproduce the bug either standalone from the commandline or using SetiAstroSuite Pro before
 # reporting it.
 
-# Version 1.0.6
+# Version 2.0.0
 # 1.0.1: AKB - convert "requires" to use exception handling
 # 1.0.2: Miscellaneous fixes
 # 1.0.3: Use tiffile instead of savetif32 to save the input file
@@ -18,376 +18,568 @@
 # 1.0.5: Fix bug in 1.0.4 when converting 32-to-16-bit
 #        Set "clear input directory" to default to True
 # 1.0.6: Don't print empty lines to the log
-
-import sirilpy as s
-# Ensure dependencies are installed
-s.ensure_installed("ttkthemes", "tiffile")
+# 2.0.0: Migrate GUI from tkinter to PyQt6, add image caching and
+#        denoise-strength blending.
 
 import os
 import re
 import sys
 import math
-import asyncio
+import argparse
 import subprocess
 from pathlib import Path
-import tkinter as tk
-from tkinter import ttk, messagebox
-from ttkthemes import ThemedTk
-from sirilpy import tksiril
+
 import numpy as np
+
+import sirilpy as s
+
+# Ensure dependencies are installed
+s.ensure_installed("PyQt6", "tiffile")
 import tiffile
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtWidgets import (
+    QApplication,
+    QWidget,
+    QLabel,
+    QVBoxLayout,
+    QHBoxLayout,
+    QRadioButton,
+    QGroupBox,
+    QCheckBox,
+    QSlider,
+    QLineEdit,
+    QPushButton,
+    QFileDialog,
+    QMessageBox,
+    QStyleFactory,
+)
 
-VERSION = "1.0.6"
+VERSION = "2.0.0"
 
-if s.check_module_version(">=0.6.0") and sys.platform.startswith("linux"):
-    import sirilpy.tkfilebrowser as filedialog
-else:
-    from tkinter import filedialog
+# ------------------------------
+# Worker to run Cosmic Clarity
+# ------------------------------
+class CosmicClarityWorker(QThread):
+    progress = pyqtSignal(float)  # 0..1
+    finished_ok = pyqtSignal(bool, str)  # success, outputfilename (if any)
 
-class CosmicClarityInterface:
-    def __init__(self, root):
-        self.root = root
-        self.root.title(f"Cosmic Clarity Denoise - v{VERSION}")
-        self.root.resizable(False, False)
+    def __init__(self, executable_path: str, mode: str, use_gpu: bool, inputfilename: str, outputfilename: str):
+        super().__init__()
+        self.executable_path = executable_path
+        self.mode = mode
+        self.use_gpu = use_gpu
+        self.inputfilename = inputfilename
+        self.outputfilename = outputfilename
 
-        self.style = tksiril.standard_style()
+    def run(self):
+        try:
+            # First run must be at denoise_strength=1.0 (full strength)
+            command = [
+                self.executable_path,
+                f"--denoise_mode={self.mode}",
+                f"--denoise_strength=1.0",
+            ]
+            if not self.use_gpu:
+                command.append("--disable_gpu")
+
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+
+            percent_re = re.compile(r"(\d+\.?\d*)%")
+            buffer = ""
+            while True:
+                chunk = process.stdout.read(80)
+                if not chunk:
+                    break
+                buffer += chunk
+
+                # Split on either \r or \n (or both)
+                lines = re.split(r'[\r\n]+', buffer)
+
+                for line in lines[:-1]:  # complete lines only
+                    if not line.strip():
+                        continue
+                    m = percent_re.search(line)
+                    if m:
+                        try:
+                            pct = float(m.group(1)) / 100.0
+                            self.progress.emit(max(0.0, min(1.0, pct)))
+                        except Exception:
+                            pass
+                    else:
+                        print(line)
+                        pass
+
+                buffer = lines[-1]  # keep incomplete line
+
+            ret = process.wait()
+            self.progress.emit(1.0)
+            if ret != 0:
+                self.finished_ok.emit(False, "")
+            else:
+                self.finished_ok.emit(True, self.outputfilename)
+        except Exception:
+            self.finished_ok.emit(False, "")
+
+# ------------------------------
+# Main UI
+# ------------------------------
+class CosmicClarityInterface(QWidget):
+    def __init__(self, cli_args=None):
+        super().__init__()
+
+        self.cli_args = cli_args
+        self.setWindowTitle(f"Cosmic Clarity Denoise - v{VERSION}")
 
         # Initialize Siril connection
         self.siril = s.SirilInterface()
-
         try:
             self.siril.connect()
         except s.SirilConnectionError:
-            self.siril.error_messagebox("Failed to connect to Siril")
-            self.close_dialog()
+            self._siril_error("Failed to connect to Siril")
             return
 
         if not self.siril.is_image_loaded():
-            self.siril.error_messagebox("No image loaded")
-            self.close_dialog()
+            self._siril_error("No image loaded")
             return
 
         try:
             self.siril.cmd("requires", "1.3.6")
         except s.CommandError:
-            self.close_dialog()
+            self.close()
             return
 
-        self.config_executable = self.check_config_file()
-        tksiril.match_theme_to_siril(self.root, self.siril)
-        self.create_widgets()
+        # Load config
+        self.config_executable = self._check_config_file()
 
-    def floor_value(self, value, decimals=2):
-        """Floor a value to the specified number of decimal places"""
-        factor = 10 ** decimals
-        return math.floor(value * factor) / factor
+        if cli_args:
+            # --- CLI mode ---
+            self._apply_cli(cli_args)
+        else:
+            # --- GUI mode ---
+            self.cached_original = None
+            self.cached_was_16bit = False
+            self.cached_mode_key = None
+            self.result_fullstrength = None
+            self._build_ui()
+            if self.config_executable:
+                self.exec_path_edit.setText(self.config_executable)
 
-    def update_denoise_strength_display(self, *args):
-        """Update the displayed target median value with floor rounding"""
-        value = self.denoise_strength_var.get()
-        rounded_value = self.floor_value(value)
-        self.denoise_strength_var.set(f"{rounded_value:.2f}")
 
-    def create_widgets(self):
-        # Main frame with no padding
-        main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill=tk.BOTH, expand=True)
+    # ------------------------------
+    # UI
+    # ------------------------------
+    def _build_ui(self):
+        root = QVBoxLayout(self)
 
-        # Title
-        title_label = ttk.Label(
-            main_frame,
-            text="Cosmic Clarity Denoise Settings",
-            style="Header.TLabel"
+        title = QLabel("Cosmic Clarity Denoise Settings")
+        title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        title.setProperty("class", "header")
+        root.addWidget(title)
+
+        # Mode group
+        mode_group = QGroupBox("Denoise Mode")
+        mode_layout = QVBoxLayout(mode_group)
+        self.mode_lum = QRadioButton("Luminance")
+        self.mode_full = QRadioButton("Full")
+        self.mode_sep = QRadioButton("Separate")
+        self.mode_lum.setChecked(True)
+        for rb in (self.mode_lum, self.mode_full, self.mode_sep):
+            mode_layout.addWidget(rb)
+        root.addWidget(mode_group)
+
+        # Options
+        options_group = QGroupBox("Options")
+        options_layout = QVBoxLayout(options_group)
+
+        self.chk_gpu = QCheckBox("Use GPU")
+        self.chk_gpu.setChecked(True)
+        options_layout.addWidget(self.chk_gpu)
+
+        self.chk_clear = QCheckBox("Clear input directory")
+        self.chk_clear.setChecked(True)
+        self.chk_clear.setToolTip(
+            "Delete any files from the Cosmic Clarity input directory.\n"
+            "If not done, Cosmic Clarity will process all image files in the input\n"
+            "directory, which will take longer and generate potentially unnecessary files.\n"
+            "WARNING: set this to False if you wish to retain previous content of the\n"
+            "Cosmic Clarity input directory."
         )
-        title_label.pack(pady=(0, 20))
+        options_layout.addWidget(self.chk_clear)
 
-        # Denoise Mode Frame
-        mode_frame = ttk.LabelFrame(main_frame, text="Denoise Mode", padding=10)
-        mode_frame.pack(fill=tk.X, padx=5, pady=5)
+        # Denoise strength slider + value
+        strength_row = QHBoxLayout()
+        strength_label = QLabel("Denoise Strength:")
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setRange(0, 100)
+        self.slider.setSingleStep(1)
+        self.slider.setValue(50)
+        self.slider.valueChanged.connect(self._update_strength_label)
+        self.lbl_strength = QLabel("0.50")
+        self.lbl_strength.setFixedWidth(40)
 
-        self.denoising_mode_var = tk.StringVar(value="Luminance")
-        denoising_modes = ["Luminance", "Full", "Separate"]
-        for mode in denoising_modes:
-            ttk.Radiobutton(
-                mode_frame,
-                text=mode,
-                variable=self.denoising_mode_var,
-                value=mode
-            ).pack(anchor=tk.W, pady=2)
+        strength_row.addWidget(strength_label)
+        strength_row.addWidget(self.slider, stretch=1)
+        strength_row.addWidget(self.lbl_strength)
+        options_layout.addLayout(strength_row)
 
-        # Options Frame
-        options_frame = ttk.LabelFrame(main_frame, text="Options", padding=10)
-        options_frame.pack(fill=tk.X, padx=5, pady=5)
+        root.addWidget(options_group)
 
-        # GPU Checkbox
-        self.use_gpu_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            options_frame,
-            text="Use GPU",
-            variable=self.use_gpu_var,
-            style="TCheckbutton"
-        ).pack(anchor=tk.W, pady=2)
+        # Executable selection
+        exec_group = QGroupBox("Cosmic Clarity Executable")
+        exec_layout = QHBoxLayout(exec_group)
+        self.exec_path_edit = QLineEdit()
+        btn_browse = QPushButton("Browse")
+        btn_browse.clicked.connect(self._browse_executable)
+        exec_layout.addWidget(self.exec_path_edit, stretch=1)
+        exec_layout.addWidget(btn_browse)
+        root.addWidget(exec_group)
 
-        # Clear Input Directory Checkbox
-        self.clear_input_dir_var = tk.BooleanVar(value=True)
-        clear_input_check = ttk.Checkbutton(
-            options_frame,
-            text="Clear input directory",
-            variable=self.clear_input_dir_var,
-            style="TCheckbutton"
-        )
-        clear_input_check.pack(anchor=tk.W, pady=2)
-        tksiril.create_tooltip(clear_input_check,
-            "Delete any files from the Cosmic Clarity input directory. "
-            "If not done, Cosmic Clarity will process all image files in the input "
-            "directory, which will take longer and generate potentially unnecessary files. "
-            "WARNING: set this to False if you wish to retain previous content of the "
-            "Cosmic Clarity input directory")
+        # Buttons
+        btn_row = QHBoxLayout()
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(self.close)
+        self.btn_apply = QPushButton("Apply")
+        self.btn_apply.clicked.connect(self.apply_clicked)
+        btn_row.addWidget(btn_close)
+        btn_row.addWidget(self.btn_apply)
+        root.addLayout(btn_row)
 
-        # Denoise Strength
-        strength_frame = ttk.Frame(options_frame)
-        strength_frame.pack(fill=tk.X, pady=5)
+        self.setLayout(root)
 
-        ttk.Label(strength_frame, text="Denoise Strength:").pack(side=tk.LEFT)
-        self.denoise_strength_var = tk.DoubleVar(value=0.5)
-        denoise_strength_scale = ttk.Scale(
-            strength_frame,
-            from_=0.0,
-            to=1.0,
-            orient=tk.HORIZONTAL,
-            variable=self.denoise_strength_var,
-            length=200
-        )
-        denoise_strength_scale.pack(side=tk.LEFT, padx=10, expand=True)
-        ttk.Label(
-            strength_frame,
-            textvariable=self.denoise_strength_var,
-            width=5,
-            style="Value.TLabel"
-        ).pack(side=tk.LEFT)
-
-        # Add trace to update display when slider changes
-        self.denoise_strength_var.trace_add("write", self.update_denoise_strength_display)
-
-        # Executable Selection Frame
-        exec_frame = ttk.LabelFrame(main_frame, text="Cosmic Clarity Executable", padding=10)
-        exec_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        self.executable_path_var = tk.StringVar(value=self.config_executable or "")
-        exec_entry = ttk.Entry(
-            exec_frame,
-            textvariable=self.executable_path_var,
-            width=40
-        )
-        exec_entry.pack(side=tk.LEFT, padx=(0, 5), expand=True)
-
-        ttk.Button(
-            exec_frame,
-            text="Browse",
-            command=self._browse_executable,
-            style="TButton"
-        ).pack(side=tk.LEFT)
-
-        # Buttons frame
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(pady=20)
-
-        close_btn = ttk.Button(
-            button_frame,
-            text="Close",
-            command=self.close_dialog,
-            style="TButton"
-        )
-        close_btn.pack(side=tk.LEFT, padx=5)
-
-        apply_btn = ttk.Button(
-            button_frame,
-            text="Apply",
-            command=self.apply_changes,
-            style="TButton"
-        )
-        apply_btn.pack(side=tk.LEFT, padx=5)
+    def _update_strength_label(self):
+        v = self.slider.value() / 100.0
+        v2 = math.floor(v * 100) / 100.0
+        self.lbl_strength.setText(f"{v2:.2f}")
 
     def _browse_executable(self):
-        filename = filedialog.askopenfilename(
-            title="Select Cosmic Clarity Executable",
-            initialdir=os.path.expanduser("~")
-        )
-        if filename:
-            self.executable_path_var.set(filename)
+        fn, _ = QFileDialog.getOpenFileName(self, "Select Cosmic Clarity Executable", os.path.expanduser("~"))
+        if fn:
+            self.exec_path_edit.setText(fn)
 
-    def check_config_file(self):
+    def _check_config_file(self):
         config_dir = self.siril.get_siril_configdir()
         config_file_path = os.path.join(config_dir, "sirilcc_denoise.conf")
-
         if os.path.isfile(config_file_path):
-            with open(config_file_path, 'r') as file:
-                executable_path = file.readline().strip()
-                if os.path.isfile(executable_path) and os.access(executable_path, os.X_OK):
-                    return executable_path
-
+            try:
+                with open(config_file_path, "r") as f:
+                    p = f.readline().strip()
+                    if os.path.isfile(p) and os.access(p, os.X_OK):
+                        return p
+            except Exception:
+                pass
         print("Executable not yet configured. It is recommended to use Seti Astro Cosmic Clarity v5.4 or higher.")
         return None
 
-    def apply_changes(self):
-        # Wrap the async method to run in the event loop
-        self.root.after(0, self._run_async_task)
+    def _save_config_if_changed(self, new_path: str):
+        if new_path and new_path != getattr(self, "config_executable", None):
+            config_file_path = os.path.join(self.siril.get_siril_configdir(), "sirilcc_denoise.conf")
+            try:
+                with open(config_file_path, "w") as f:
+                    f.write(new_path + "\n")
+            except Exception as e:
+                print(f"Failed to write config: {e}")
+            self.config_executable = new_path
 
-    def _run_async_task(self):
-        asyncio.run(self._apply_changes())
-
-    async def run_cosmic_clarity(self, executable_path, mode, denoise_strength):
+    def _siril_error(self, msg: str):
         try:
-            command = [
-                executable_path,
-                f"--denoise_mode={mode}",
-                f"--denoise_strength={denoise_strength}",
-            ]
-            if not self.use_gpu_var.get():
-                command.append("--disable_gpu")
+            self.siril.error_messagebox(msg)
+        except Exception:
+            QMessageBox.critical(self, "Error", msg)
+        self.close()
 
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=subprocess.PIPE,
-                stderr=sys.stderr,
-            )
-
-            buffer = ""
-            while True:
-                chunk = await process.stdout.read(80)
-                if not chunk:
-                    break
-                buffer += chunk.decode('utf-8', errors='ignore')
-
-                lines = buffer.split('\r')
-                for line in lines[:-1]:
-                    match = re.search(r'(\d+\.\d+)%', line)
-                    if match:
-                        percentage = float(match.group(1))
-                        self.siril.update_progress("Seti Astro Cosmic Clarity Denoise progress...", percentage / 100)
-                    else:
-                        tmp = line.strip()
-                        if tmp != "":
-                            print(tmp)
-                buffer = lines[-1]
-
-            await process.wait()
-            if process.returncode != 0:
-                stderr = await process.stderr.read()
-                error_message = stderr.decode('utf-8', errors='ignore')
-                raise subprocess.CalledProcessError(
-                    process.returncode,
-                    executable_path,
-                    error_message
-                )
-            return True
-        except Exception as e:
-            print(f"Error in run_cosmic_clarity: {str(e)}")
-            return False
-
-    async def _apply_changes(self):
+    # ------------------------------
+    # Apply (main logic with caching)
+    # ------------------------------
+    def apply_clicked(self):
         try:
-            # Get the processing thread
-            with self.siril.image_lock():
-                mode = self.denoising_mode_var.get().lower()
-                denoise_strength = self.denoise_strength_var.get()
-                executable_path = self.executable_path_var.get()
-                clear_input = self.clear_input_dir_var.get()
+            mode = self._get_current_mode()
+            denoise_strength = math.floor((self.slider.value() / 100.0) * 100) / 100.0
+            executable_path = self.exec_path_edit.text().strip()
+            use_gpu = self.chk_gpu.isChecked()
+            clear_input = self.chk_clear.isChecked()
 
-                if executable_path != self.config_executable:
-                    config_file_path = os.path.join(self.siril.get_siril_configdir(), "sirilcc_denoise.conf")
-                    with open(config_file_path, 'w') as file:
-                        file.write(f"{executable_path}\n")
+            if not executable_path or not os.path.isfile(executable_path):
+                QMessageBox.warning(self, "Executable", "Please select a valid Cosmic Clarity executable.")
+                return
 
-                filename = self.siril.get_image_filename()
-                directory = os.path.dirname(executable_path)
-                basename = os.path.basename(filename)
-                original_dir = os.getcwd()
-                os.chdir(directory)
-                os.makedirs("input", exist_ok=True)
-                os.makedirs("output", exist_ok=True)
+            # Persist executable path if changed
+            self._save_config_if_changed(executable_path)
 
-                inputpath = os.path.join(directory, "input")
-                inputfilename = os.path.join(inputpath, basename) + str(".tif")
-                outputpath = os.path.join(directory, "output")
-                outputfilename = os.path.join(outputpath, f"{basename}_denoised.tif")
+            # Invalidate cache if mode changed
+            if self.cached_mode_key is not None and self.cached_mode_key != mode:
+                self.cached_original = None
+                self.result_fullstrength = None
+                self.cached_was_16bit = False
 
-                if clear_input:
-                    files = Path(inputpath).glob("*.*")
-                    for each_file in files:
-                        try:
-                            each_file.unlink()
-                            print(f"Deleted: {each_file}")
-                        except Exception as e:
-                            print(f"Failed to delete {each_file}: {e}")
-
-                was_16bit = False
+            if self.cached_original is None:
                 pixels = self.siril.get_image_pixeldata()
-                if pixels.dtype == np.uint16:
+                was_16bit = (pixels.dtype == np.uint16)
+                if was_16bit:
                     pixels = pixels.astype(np.float32) / 65535.0
-                    was_16bit = True
-
-                # Determine photometric and reshape if needed
-                if pixels.ndim == 2:
-                    # Mono image
-                    photometry = 'minisblack'
-                elif pixels.ndim == 3 and pixels.shape[0] in (1, 3):
-                    # Multi-sample image in (samples, height, width)
-                    photometry = 'minisblack' if pixels.shape[0] == 1 else 'rgb'
-                    pixels = pixels[0] if pixels.shape[0] == 1 else pixels.transpose(1, 2, 0)
                 else:
-                    raise ValueError(f"Unexpected image shape: {pixels.shape}")
+                    pixels = pixels.astype(np.float32, copy=False)
+                pixels_cf = self._ensure_channel_first(pixels)
 
-                # Write TIFF without ICC profile
-                tiffile.imwrite(inputfilename, pixels, photometric=photometry, planarconfig='contig')
-                print(f"Running denoise with mode: {mode}, denoise_strength: {denoise_strength}")
-                self.siril.update_progress("Seti Astro Cosmic Clarity Denoise starting...", 0)
+                self.cached_original = pixels_cf
+                self.cached_was_16bit = was_16bit
+                self.cached_mode_key = mode
 
-                success = await self.run_cosmic_clarity(
-                    executable_path,
-                    mode,
-                    denoise_strength
-                )
+                directory = os.path.dirname(executable_path)
+                original_dir = os.getcwd()
+                try:
+                    os.chdir(directory)
+                    inputpath = os.path.join(directory, "input")
+                    outputpath = os.path.join(directory, "output")
+                    os.makedirs(inputpath, exist_ok=True)
+                    os.makedirs(outputpath, exist_ok=True)
 
-                if success:
-                    with tiffile.TiffFile(outputfilename) as tiff:
-                        pixel_data = tiff.asarray()
-                    pixel_data = np.ascontiguousarray(pixel_data)
-                    if pixel_data.ndim == 2:
-                        # For 2D images, add a channel dimension
-                        pixel_data = pixel_data[np.newaxis, :, :]
-                    elif pixel_data.ndim == 3 and pixel_data.shape[2] == 3:
-                        pixel_data = np.transpose(pixel_data, (2, 0, 1))
-                        pixel_data = np.ascontiguousarray(pixel_data)
-                    force_16bit = self.siril.get_siril_config("core", "force_16bit")
-                    if (was_16bit or force_16bit):
-                        pixel_data = np.rint(pixel_data * 65535.0).astype(np.uint16)
-                    # Save original image for undo
-                    self.siril.undo_save_state(f"Cosmic Clarity denoise ({mode}, str={denoise_strength})")
-                    # Update Siril
-                    self.siril.set_image_pixeldata(pixel_data)
-                    # Reset progress bar and report completion
-                    self.siril.log("Cosmic Clarity denoise complete.")
-                    self.siril.reset_progress()
+                    basename = os.path.basename(self.siril.get_image_filename())
+                    inputfilename = os.path.join(inputpath, basename) + ".tif"
+                    outputfilename = os.path.join(outputpath, f"{basename}_denoised.tif")
 
+                    if clear_input:
+                        for each_file in Path(inputpath).glob("*.*"):
+                            try:
+                                each_file.unlink()
+                                print(f"Deleted: {each_file}")
+                            except Exception as e:
+                                print(f"Failed to delete {each_file}: {e}")
+
+                    tiff_arr, photometry = self._to_tiff_compatible(self.cached_original)
+                    tiffile.imwrite(inputfilename, tiff_arr, photometric=photometry, planarconfig='contig')
+
+                    self.siril.update_progress("Seti Astro Cosmic Clarity Denoise starting...", 0)
+
+                    # Disable Apply until worker finishes
+                    self.btn_apply.setEnabled(False)
+
+                    self._worker = CosmicClarityWorker(executable_path, mode, use_gpu, inputfilename, outputfilename)
+                    self._worker.progress.connect(self._on_progress)
+                    self._worker.finished_ok.connect(self._on_full_run_finished)
+
+                    self._pending_blend_strength = denoise_strength
+                    self._pending_outputfilename = outputfilename
+                    self._worker.start()
+                    return
+                finally:
+                    os.chdir(original_dir)
+
+            if self.result_fullstrength is not None:
+                self._apply_blend_and_set_image(denoise_strength)
+            else:
+                QMessageBox.information(self, "Please wait", "Initial denoise is still in progress.")
         except Exception as e:
-            print(f"Error in apply_changes: {str(e)}")
-            messagebox.showerror("Error", str(e))
+            QMessageBox.critical(self, "Error", str(e))
 
-    def close_dialog(self):
-        self.root.quit()
-        self.root.destroy()
+    def _on_progress(self, frac: float):
+        try:
+            self.siril.update_progress("Seti Astro Cosmic Clarity Denoise progress...", float(frac))
+        except Exception:
+            pass
+
+    def _on_full_run_finished(self, success: bool, outputfilename: str):
+        try:
+            if not success:
+                self.siril.reset_progress()
+                QMessageBox.critical(self, "Cosmic Clarity", "Processing failed.")
+                self.cached_original = None
+                self.result_fullstrength = None
+                return
+
+            full_cf = self._read_tiff_as_channel_first_float(self._pending_outputfilename)
+            self.result_fullstrength = full_cf
+            self._apply_blend_and_set_image(self._pending_blend_strength)
+        finally:
+            try:
+                self.siril.reset_progress()
+            except Exception:
+                pass
+            # Re-enable Apply button
+            self.btn_apply.setEnabled(True)
+
+    # --------
+    # Helpers
+    # --------
+    def _get_current_mode(self) -> str:
+        if self.mode_full.isChecked():
+            return "full"
+        if self.mode_sep.isChecked():
+            return "separate"
+        return "luminance"
+
+    def _ensure_channel_first(self, arr: np.ndarray) -> np.ndarray:
+        if arr.ndim == 2:
+            return arr[np.newaxis, :, :]
+        if arr.ndim == 3 and arr.shape[0] in (1, 3):
+            return arr
+        if arr.ndim == 3 and arr.shape[2] == 3:
+            return np.transpose(arr, (2, 0, 1))
+        raise ValueError(f"Unexpected image shape: {arr.shape}")
+
+    def _to_tiff_compatible(self, arr_cf: np.ndarray):
+        if arr_cf.ndim != 3 or arr_cf.shape[0] not in (1, 3):
+            raise ValueError(f"Unexpected array shape for TIFF: {arr_cf.shape}")
+        if arr_cf.shape[0] == 1:
+            return arr_cf[0], 'minisblack'
+        else:
+            return np.transpose(arr_cf, (1, 2, 0)), 'rgb'
+
+    def _read_tiff_as_channel_first_float(self, filename: str) -> np.ndarray:
+        with tiffile.TiffFile(filename) as t:
+            data = t.asarray()
+        data = np.ascontiguousarray(data)
+        if data.ndim == 2:
+            data_cf = data[np.newaxis, :, :]
+        elif data.ndim == 3 and data.shape[2] == 3:
+            data_cf = np.transpose(data, (2, 0, 1))
+        else:
+            raise ValueError(f"Unexpected TIFF shape: {data.shape}")
+        return data_cf.astype(np.float32, copy=False)
+
+    def _apply_blend_and_set_image(self, denoise_strength: float):
+        try:
+            if self.cached_original is None or self.result_fullstrength is None:
+                return
+            ds = float(max(0.0, min(1.0, denoise_strength)))
+            blended = ds * self.result_fullstrength + (1.0 - ds) * self.cached_original
+            blended = np.clip(blended, 0.0, 1.0) if self.cached_was_16bit else blended
+
+            mode = self._get_current_mode()
+            self.siril.undo_save_state(f"Cosmic Clarity denoise ({mode}, str={ds})")
+
+            out_cf = blended
+            if self.cached_was_16bit:
+                out_cf = np.rint(out_cf * 65535.0).astype(np.uint16)
+
+            out_cf = np.ascontiguousarray(out_cf)
+            with self.siril.image_lock():
+                self.siril.set_image_pixeldata(out_cf)
+
+            self.siril.log("Cosmic Clarity denoise complete.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+
+    def _apply_cli(self, args):
+        """Run processing directly from CLI args (headless mode)."""
+        try:
+            mode = args.denoising_mode.lower()
+            denoise_strength = args.denoise_strength
+            executable_path = args.executable
+            use_gpu = args.use_gpu
+            clear_input = args.clear_input_dir
+
+            # --- fallback: check config file if no executable provided ---
+            if not executable_path:
+                executable_path = self._check_config_file() or ""
+            if not executable_path or not os.path.isfile(executable_path):
+                print("Error: please provide a valid Cosmic Clarity executable "
+                      "(-executable) or configure one via GUI.", file=sys.stderr)
+                sys.exit(1)
+
+            # Save executable path if it differs from stored one
+            self._save_config_if_changed(executable_path)
+
+            # Minimal reuse of apply_clicked logic
+            pixels = self.siril.get_image_pixeldata()
+            was_16bit = (pixels.dtype == np.uint16)
+            if was_16bit:
+                pixels = pixels.astype(np.float32) / 65535.0
+            else:
+                pixels = pixels.astype(np.float32, copy=False)
+            pixels_cf = self._ensure_channel_first(pixels)
+
+            directory = os.path.dirname(executable_path)
+            os.makedirs(os.path.join(directory, "input"), exist_ok=True)
+            os.makedirs(os.path.join(directory, "output"), exist_ok=True)
+
+            basename = os.path.basename(self.siril.get_image_filename())
+            inputfilename = os.path.join(directory, "input", basename + ".tif")
+            outputfilename = os.path.join(directory, "output", f"{basename}_denoised.tif")
+
+            if clear_input:
+                for each_file in Path(os.path.join(directory, "input")).glob("*.*"):
+                    try:
+                        each_file.unlink()
+                    except Exception:
+                        pass
+
+            tiff_arr, photometry = self._to_tiff_compatible(pixels_cf)
+            tiffile.imwrite(inputfilename, tiff_arr, photometric=photometry, planarconfig='contig')
+
+            # Run external process synchronously
+            cmd = [executable_path, f"--denoise_mode={mode}", "--denoise_strength=1.0"]
+            if not use_gpu:
+                cmd.append("--disable_gpu")
+            ret = subprocess.call(cmd)
+            if ret != 0 or not os.path.isfile(outputfilename):
+                print("Error: Cosmic Clarity process failed.", file=sys.stderr)
+                sys.exit(1)
+
+            result_fullstrength = self._read_tiff_as_channel_first_float(outputfilename)
+            ds = float(max(0.0, min(1.0, denoise_strength)))
+            blended = ds * result_fullstrength + (1.0 - ds) * pixels_cf
+            if was_16bit:
+                blended = np.rint(blended * 65535.0).astype(np.uint16)
+
+            with self.siril.image_lock():
+                self.siril.undo_save_state(f"Cosmic Clarity denoise ({mode}, str={ds})")
+                self.siril.set_image_pixeldata(blended)
+
+            print("Cosmic Clarity denoise completed successfully.")
+        except Exception as e:
+            print(f"Error in CLI apply: {e}", file=sys.stderr)
+            sys.exit(1)
 
 def main():
-    try:
-        # Create themed root window
-        root = ThemedTk()
+    parser = argparse.ArgumentParser(description="Cosmic Clarity Denoise Script")
+    parser.add_argument("-denoising_mode", type=str, choices=["luminance", "full", "separate"],
+                        default="luminance", help="Denoising mode")
+    parser.add_argument("-denoise_strength", type=float, default=0.5,
+                        help="Denoise strength (0.0 to 1.0)")
+    parser.add_argument("-use_gpu", action="store_true", default=True,
+                        help="Use GPU (default: True)")
+    parser.add_argument("-no_gpu", action="store_false", dest="use_gpu",
+                        help="Disable GPU")
+    parser.add_argument("-clear_input_dir", action="store_true", default=True,
+                        help="Clear input directory (default: True)")
+    parser.add_argument("-no_clear_input", action="store_false", dest="clear_input_dir",
+                        help="Do not clear input directory")
+    parser.add_argument("-executable", type=str, default="",
+                        help="Path to Cosmic Clarity executable")
 
-        app = CosmicClarityInterface(root)
-        root.mainloop()
+    args, unknown = parser.parse_known_args()
+
+    # Detect CLI mode if any non-default values provided
+    cli_mode = any([
+        args.denoising_mode != "luminance",
+        args.denoise_strength != 0.5,
+        not args.use_gpu,
+        not args.clear_input_dir,
+        args.executable != ""
+    ])
+
+    try:
+        if cli_mode:
+            # Headless CLI run
+            CosmicClarityInterface(cli_args=args)
+        else:
+            # GUI mode
+            app = QApplication(sys.argv)
+            if "Fusion" in QStyleFactory.keys():
+                app.setStyle("Fusion")
+            w = CosmicClarityInterface()
+            w.show()
+            sys.exit(app.exec())
     except Exception as e:
-        print(f"Error initializing application: {str(e)}")
+        print(f"Error initializing application: {e}", file=sys.stderr)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
