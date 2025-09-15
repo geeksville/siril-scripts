@@ -15,8 +15,9 @@
 # 2.0.0 CR: Using PyQt6 instead of tkinter
 # 2.1.0 Refactored with Qt OpenGL sphere visualization
 # 2.2.0 Refactored with VisPy sphere visualization
+# 2.2.1 Disable zooming (prevents visual glitches)
 
-VERSION = "2.2.0"
+VERSION = "2.2.1"
 
 # Catalog retrieval details
 ASTRO_RECORD = 14692304
@@ -127,6 +128,9 @@ class SkyVisualizationWidget:
             size=(800, 600),
             show=False
         )
+        # Disconnect scroll wheel handler (zoom)
+        # (prevents visual glitches)
+        self.canvas.events.mouse_wheel.disconnect()
 
         # Create view and camera
         self.view = self.canvas.central_widget.add_view()
@@ -144,12 +148,11 @@ class SkyVisualizationWidget:
         """Setup camera for external view"""
         camera = scene.ArcballCamera(
             fov=45,
-            distance=3.5,
+            distance=3.0,
             center=(0, 0, 0)
         )
         camera.flip_factors = (1, 1, 1)  # Normal controls
         self.view.camera = camera
-        self.view.camera.distance_limits = (2.5, 10.0)
 
     def setup_internal_camera(self):
         """Setup camera for internal view"""
@@ -160,7 +163,6 @@ class SkyVisualizationWidget:
         )
         camera.flip_factors = (1, 1, 1)  # Reversed pan controls
         self.view.camera = camera
-        self.view.camera.distance_limits = (0.1, 0.1)
 
     def toggle_view_mode(self):
         """Toggle between external and internal view modes"""
