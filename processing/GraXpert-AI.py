@@ -50,7 +50,8 @@ Models licensed as CC-BY-NC-SA-4.0
 #        invalid
 # 1.1.2  Update version string and add DLL preloading, which may improve
 #        situations where system NVIDIA libraries can't be found
-# 1.1.3  Update use of preload_dlls to avoid problems on ROCm backend
+# 2.0.0  Update GUI to base it on PyQt6
+# 2.0.1  Change import order to avoid DLL load errors on Windows
 
 import os
 import re
@@ -61,9 +62,7 @@ import platform
 import tempfile
 import threading
 import subprocess
-import tkinter as tk
 from time import sleep
-from tkinter import ttk, messagebox
 from packaging.version import Version, parse
 
 import sirilpy as s
@@ -72,16 +71,7 @@ if not s.check_module_version('>=0.6.42'):
     print("Error: requires sirilpy module >= 0.6.42")
     sys.exit(1)
 
-from sirilpy import tksiril, SirilError
-
-s.ensure_installed("ttkthemes", "numpy", "astropy", "appdirs",
-                   "opencv-python")
-
-import cv2
-import numpy as np
-from astropy.io import fits
-from ttkthemes import ThemedTk
-from appdirs import user_data_dir
+from sirilpy import SirilError
 
 # Determine the correct onnxruntime package based on OS and hardware,
 # and ensure it is installed
@@ -94,7 +84,22 @@ if hasattr(onnxruntime, 'preload_dlls'):
         onnxruntime.preload_dlls()
 onnxruntime.set_default_logger_severity(4)
 
-VERSION = "1.1.3"
+s.ensure_installed("numpy", "astropy", "appdirs",
+                   "opencv-python", "PyQt6")
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QLabel, QComboBox, QPushButton, QSlider, QSpinBox, QDoubleSpinBox, QCheckBox,
+    QFrame, QListWidget, QScrollArea, QProgressBar, QMessageBox, QDialog,
+    QRadioButton, QButtonGroup, QGroupBox, QSizePolicy, QStackedWidget
+)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt6.QtGui import QFont
+import cv2
+import numpy as np
+from astropy.io import fits
+from appdirs import user_data_dir
+
+VERSION = "2.0.1"
 DENOISE_CONFIG_FILENAME = "graxpert_denoise_model.conf"
 BGE_CONFIG_FILENAME = "graxpert_bge_model.conf"
 DECONVOLVE_STARS_CONFIG_FILENAME = "graxpert_deconv_stars_model.conf"
@@ -322,7 +327,790 @@ def save_fits(data, path, original_header=None, history_text=""):
     header['HISTORY'] = history_text
     fits.writeto(path, data, header, overwrite=True)
 
-class GraXpertModelManager:
+def clear_layout(layout):
+    """
+    Safely removes all widgets and layouts from a layout.
+    """
+    if layout is not None:
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+            else:
+                sub_layout = item.layout()
+                if sub_layout is not None:
+                    clear_layout(sub_layout)
+
+class GUIInterface(QMainWindow):
+    """Class providing the GUI interface for GraXpert AI Operations."""
+
+    def __init__(self, siril):
+        super().__init__()
+
+        if not siril:
+            raise ValueError("No SirilInterface provided to GUIInterface()")
+
+        self.siril = siril
+        self.model_manager = None
+
+        # Get available operations
+        self.operations = get_available_local_operations()
+        self.selected_operation = 'bge'  # Default operation
+
+        # Initialize processor reference (will be set based on operation)
+        self.processor = None
+
+        image_loaded = self.siril.is_image_loaded()
+        seq_loaded = self.siril.is_sequence_loaded()
+        if not (image_loaded or seq_loaded):
+            QMessageBox.critical(self, "Error", "No image or sequence loaded")
+            self.close()
+            return
+
+        try:
+            self.siril.cmd("requires", "1.4.0-beta2")
+        except Exception:  # Replace s.CommandError with generic Exception for now
+            self.close()
+            return
+
+        # Initialize variables for UI
+        self.model_path = ""
+        self.strength_value = 0.5
+        self.smoothing_value = 0.5
+        self.psf_size_value = 5.0
+        self.batch_size_value = 4
+        self.keep_bg_value = False
+        self.gpu_acceleration_value = True
+        self.correction_type_value = "subtraction"
+        self.model_path_mapping = {}
+
+        self.siril.log("This script is under ongoing development. Please report any bugs to "
+            "https://gitlab.com/free-astro/siril-scripts. We are also especially keen "
+            "for confirmation of success / failure from Linux users with AMD Radeon "
+            "or Intel ARC GPUs as we do not have these hardware / OS combinations among "
+            "the development team", color=s.LogColor.BLUE)
+
+        # Create widgets
+        self.operation_widget_map = {}  # New mapping for QStackedWidget
+        self.create_widgets()
+
+        # Set default operation to bge
+        if 'bge' in self.operations:
+            self.selected_operation = 'bge'
+            self._on_operation_selected()  # Initialize the correct processor
+
+        # Set progress label
+        if image_loaded:
+            self._update_progress("Single image loaded: will process this image only")
+        else:
+            self._update_progress("Sequence loaded: will process selected frames of the sequence")
+
+    def create_widgets(self):
+        """Create Qt widgets to provide the script GUI"""
+        self.setWindowTitle(f"GraXpert AI - Siril interface v{VERSION}")
+        # Remove fixed size - let the window size itself to content
+        self.setMinimumWidth(500)
+        self.setMaximumWidth(700)
+
+        # Create central widget and main layout
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(12)
+
+        # Title and version
+        title_label = QLabel("GraXpert AI")
+        title_font = QFont()
+        title_font.setBold(True)
+        title_font.setPointSize(14)
+        title_label.setFont(title_font)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(title_label)
+
+        version_label = QLabel(f"Script version: {VERSION}")
+        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(version_label)
+
+        # Separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        main_layout.addWidget(separator)
+
+        # Operation selection
+        op_layout = QHBoxLayout()
+        op_layout.addWidget(QLabel("Operation:"))
+
+        self.op_dropdown = QComboBox()
+        self.op_dropdown.addItems(list(self.operations.values()))
+        self.op_dropdown.currentTextChanged.connect(self._on_operation_dropdown_changed)
+        op_layout.addWidget(self.op_dropdown)
+        main_layout.addLayout(op_layout)
+
+        # Model selection
+        model_layout = QHBoxLayout()
+        model_layout.addWidget(QLabel("Select Model:"))
+
+        self.model_dropdown = QComboBox()
+        self.model_dropdown.currentTextChanged.connect(self._on_model_selected)
+        model_layout.addWidget(self.model_dropdown)
+        main_layout.addLayout(model_layout)
+
+        # Parameters Frame - using a QStackedWidget with compact size policy
+        self.params_stack = QStackedWidget()
+        # Set size policy to fit content and not expand unnecessarily
+        self.params_stack.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        main_layout.addWidget(self.params_stack)
+
+        # Create frames for each operation's parameters and add to the stack
+        self.operation_widget_map = {}
+        self._create_operation_parameters()
+
+        # Advanced parameters (common for all operations)
+        advanced_group = QGroupBox("Advanced")
+        advanced_layout = QVBoxLayout(advanced_group)
+
+        # Batch size
+        batch_layout = QHBoxLayout()
+        batch_layout.addWidget(QLabel("Batch Size:"))
+        batch_layout.addStretch()
+        self.batch_size_spin = QSpinBox()
+        self.batch_size_spin.setRange(1, 32)
+        self.batch_size_spin.setValue(4)
+        self.batch_size_spin.valueChanged.connect(self._update_batch_size)
+        batch_layout.addWidget(self.batch_size_spin)
+        advanced_layout.addLayout(batch_layout)
+
+        # GPU acceleration checkbox
+        self.gpu_checkbox = QCheckBox("Use GPU acceleration (if available)")
+        self.gpu_checkbox.setChecked(True)
+        self.gpu_checkbox.toggled.connect(self._update_gpu_acceleration)
+        advanced_layout.addWidget(self.gpu_checkbox)
+
+        main_layout.addWidget(advanced_group)
+
+        # Action buttons
+        buttons_layout = QHBoxLayout()
+
+        apply_btn = QPushButton("Apply")
+        apply_btn.clicked.connect(self._on_apply)
+        buttons_layout.addWidget(apply_btn)
+
+        model_btn = QPushButton("GraXpert Model Manager")
+        model_btn.clicked.connect(self.load_model_manager)
+        buttons_layout.addWidget(model_btn)
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        buttons_layout.addWidget(close_btn)
+
+        main_layout.addLayout(buttons_layout)
+
+        # Progress message label
+        self.progress_label = QLabel("")
+        # Set word wrap in case of long messages
+        self.progress_label.setWordWrap(True)
+        main_layout.addWidget(self.progress_label)
+
+        # Remove the addStretch() that was causing the blank space
+        # The layout will now size itself to fit the content
+
+        # Initialize with default operation
+        self._populate_model_dropdown()
+
+        # Resize window to fit contents after everything is set up
+        self.adjustSize()
+
+    def _create_operation_parameters(self):
+        """Create parameter widgets for each operation and add them to the stacked widget"""
+        # Denoise operation parameters
+        denoise_widget = QWidget()
+        denoise_layout = QVBoxLayout(denoise_widget)
+        denoise_layout.setSpacing(8)
+        denoise_layout.setContentsMargins(10, 10, 10, 10)
+
+        # Strength slider and spinbox
+        strength_layout = QHBoxLayout()
+        strength_layout.addWidget(QLabel("Strength:"))
+
+        self.strength_slider = QSlider(Qt.Orientation.Horizontal)
+        self.strength_slider.setRange(0, 100)  # 0-1.0 mapped to 0-100
+        self.strength_slider.setValue(50)
+        self.strength_slider.valueChanged.connect(self._update_strength_from_slider)
+        strength_layout.addWidget(self.strength_slider)
+
+        self.strength_spin = QDoubleSpinBox()
+        self.strength_spin.setRange(0.0, 1.0)
+        self.strength_spin.setSingleStep(0.01)
+        self.strength_spin.setDecimals(2)
+        self.strength_spin.setValue(0.5)
+        self.strength_spin.valueChanged.connect(self._update_strength_from_spin)
+        strength_layout.addWidget(self.strength_spin)
+
+        denoise_layout.addLayout(strength_layout)
+        # Remove addStretch() that was creating unnecessary space
+
+        self.params_stack.addWidget(denoise_widget)
+        self.operation_widget_map['denoise'] = self.params_stack.indexOf(denoise_widget)
+
+        # BGE operation parameters
+        bge_widget = QWidget()
+        bge_layout = QVBoxLayout(bge_widget)
+        bge_layout.setSpacing(8)
+        bge_layout.setContentsMargins(10, 10, 10, 10)
+
+        # Smoothing slider and spinbox
+        smoothing_layout = QHBoxLayout()
+        smoothing_layout.addWidget(QLabel("Smoothing:"))
+
+        self.smoothing_slider = QSlider(Qt.Orientation.Horizontal)
+        self.smoothing_slider.setRange(0, 100)
+        self.smoothing_slider.setValue(50)
+        self.smoothing_slider.valueChanged.connect(self._update_smoothing_from_slider)
+        smoothing_layout.addWidget(self.smoothing_slider)
+
+        self.smoothing_spin = QDoubleSpinBox()
+        self.smoothing_spin.setRange(0.0, 1.0)
+        self.smoothing_spin.setSingleStep(0.01)
+        self.smoothing_spin.setDecimals(2)
+        self.smoothing_spin.setValue(0.5)
+        self.smoothing_spin.valueChanged.connect(self._update_smoothing_from_spin)
+        smoothing_layout.addWidget(self.smoothing_spin)
+
+        bge_layout.addLayout(smoothing_layout)
+
+        # Correction type
+        correction_layout = QHBoxLayout()
+        correction_layout.addWidget(QLabel("Correction Type:"))
+        correction_layout.addStretch()
+
+        self.correction_combo = QComboBox()
+        self.correction_combo.addItems(["subtraction", "division"])
+        self.correction_combo.currentTextChanged.connect(self._update_correction_type)
+        correction_layout.addWidget(self.correction_combo)
+        bge_layout.addLayout(correction_layout)
+
+        # Keep background checkbox
+        self.keep_bg_checkbox = QCheckBox("Keep background")
+        self.keep_bg_checkbox.toggled.connect(self._update_keep_bg)
+        bge_layout.addWidget(self.keep_bg_checkbox)
+
+        # Remove addStretch() that was creating unnecessary space
+
+        self.params_stack.addWidget(bge_widget)
+        self.operation_widget_map['bge'] = self.params_stack.indexOf(bge_widget)
+
+        # Deconvolution operations parameters
+        deconv_stars_widget = QWidget()
+        deconv_stars_layout = QVBoxLayout(deconv_stars_widget)
+        deconv_stars_layout.setSpacing(8)
+        deconv_stars_layout.setContentsMargins(10, 10, 10, 10)
+
+        # Strength slider and spinbox
+        strength_layout_s = QHBoxLayout()
+        strength_layout_s.addWidget(QLabel("Strength:"))
+
+        self.deconv_stars_strength_slider = QSlider(Qt.Orientation.Horizontal)
+        self.deconv_stars_strength_slider.setRange(0, 100)
+        self.deconv_stars_strength_slider.setValue(50)
+        self.deconv_stars_strength_slider.valueChanged.connect(self._update_strength_from_slider)
+        strength_layout_s.addWidget(self.deconv_stars_strength_slider)
+
+        self.deconv_stars_strength_spin = QDoubleSpinBox()
+        self.deconv_stars_strength_spin.setRange(0.0, 1.0)
+        self.deconv_stars_strength_spin.setSingleStep(0.01)
+        self.deconv_stars_strength_spin.setDecimals(2)
+        self.deconv_stars_strength_spin.setValue(0.5)
+        self.deconv_stars_strength_spin.valueChanged.connect(self._update_strength_from_spin)
+        strength_layout_s.addWidget(self.deconv_stars_strength_spin)
+
+        deconv_stars_layout.addLayout(strength_layout_s)
+
+        # PSF Size slider and spinbox
+        psf_layout_s = QHBoxLayout()
+        psf_layout_s.addWidget(QLabel("PSF Size:"))
+
+        self.deconv_stars_psf_slider = QSlider(Qt.Orientation.Horizontal)
+        self.deconv_stars_psf_slider.setRange(1, 100)
+        self.deconv_stars_psf_slider.setValue(50)
+        self.deconv_stars_psf_slider.valueChanged.connect(self._update_psf_from_slider)
+        psf_layout_s.addWidget(self.deconv_stars_psf_slider)
+
+        self.deconv_stars_psf_spin = QDoubleSpinBox()
+        self.deconv_stars_psf_spin.setRange(0.1, 10.0)
+        self.deconv_stars_psf_spin.setSingleStep(0.1)
+        self.deconv_stars_psf_spin.setDecimals(1)
+        self.deconv_stars_psf_spin.setValue(5.0)
+        self.deconv_stars_psf_spin.valueChanged.connect(self._update_psf_from_spin)
+        psf_layout_s.addWidget(self.deconv_stars_psf_spin)
+
+        deconv_stars_layout.addLayout(psf_layout_s)
+        # Remove addStretch() that was creating unnecessary space
+
+        self.params_stack.addWidget(deconv_stars_widget)
+        self.operation_widget_map['deconvolution-stars'] = self.params_stack.indexOf(deconv_stars_widget)
+
+        deconv_object_widget = QWidget()
+        deconv_object_layout = QVBoxLayout(deconv_object_widget)
+        deconv_object_layout.setSpacing(8)
+        deconv_object_layout.setContentsMargins(10, 10, 10, 10)
+
+        # Strength slider and spinbox
+        strength_layout_o = QHBoxLayout()
+        strength_layout_o.addWidget(QLabel("Strength:"))
+
+        self.deconv_object_strength_slider = QSlider(Qt.Orientation.Horizontal)
+        self.deconv_object_strength_slider.setRange(0, 100)
+        self.deconv_object_strength_slider.setValue(50)
+        self.deconv_object_strength_slider.valueChanged.connect(self._update_strength_from_slider)
+        strength_layout_o.addWidget(self.deconv_object_strength_slider)
+
+        self.deconv_object_strength_spin = QDoubleSpinBox()
+        self.deconv_object_strength_spin.setRange(0.0, 1.0)
+        self.deconv_object_strength_spin.setSingleStep(0.01)
+        self.deconv_object_strength_spin.setDecimals(2)
+        self.deconv_object_strength_spin.setValue(0.5)
+        self.deconv_object_strength_spin.valueChanged.connect(self._update_strength_from_spin)
+        strength_layout_o.addWidget(self.deconv_object_strength_spin)
+
+        deconv_object_layout.addLayout(strength_layout_o)
+
+        # PSF Size slider and spinbox
+        psf_layout_o = QHBoxLayout()
+        psf_layout_o.addWidget(QLabel("PSF Size:"))
+
+        self.deconv_object_psf_slider = QSlider(Qt.Orientation.Horizontal)
+        self.deconv_object_psf_slider.setRange(1, 100)
+        self.deconv_object_psf_slider.setValue(50)
+        self.deconv_object_psf_slider.valueChanged.connect(self._update_psf_from_slider)
+        psf_layout_o.addWidget(self.deconv_object_psf_slider)
+
+        self.deconv_object_psf_spin = QDoubleSpinBox()
+        self.deconv_object_psf_spin.setRange(0.1, 10.0)
+        self.deconv_object_psf_spin.setSingleStep(0.1)
+        self.deconv_object_psf_spin.setDecimals(1)
+        self.deconv_object_psf_spin.setValue(5.0)
+        self.deconv_object_psf_spin.valueChanged.connect(self._update_psf_from_spin)
+        psf_layout_o.addWidget(self.deconv_object_psf_spin)
+
+        deconv_object_layout.addLayout(psf_layout_o)
+        # Remove addStretch() that was creating unnecessary space
+
+        self.params_stack.addWidget(deconv_object_widget)
+        self.operation_widget_map['deconvolution-object'] = self.params_stack.indexOf(deconv_object_widget)
+
+    def _update_strength_from_slider(self):
+        """Update strength spinbox when slider changes"""
+        sender = self.sender()
+        value = sender.value() / 100.0
+        self.strength_value = value
+
+        # Update the corresponding spinbox
+        if hasattr(self, 'strength_spin'):
+            self.strength_spin.blockSignals(True)
+            self.strength_spin.setValue(value)
+            self.strength_spin.blockSignals(False)
+
+    def _update_strength_from_spin(self):
+        """Update strength slider when spinbox changes"""
+        sender = self.sender()
+        value = sender.value()
+        self.strength_value = value
+
+        # Update the corresponding slider
+        if hasattr(self, 'strength_slider'):
+            self.strength_slider.blockSignals(True)
+            self.strength_slider.setValue(int(value * 100))
+            self.strength_slider.blockSignals(False)
+
+    def _update_smoothing_from_slider(self):
+        """Update smoothing spinbox when slider changes"""
+        value = self.smoothing_slider.value() / 100.0
+        self.smoothing_value = value
+        self.smoothing_spin.blockSignals(True)
+        self.smoothing_spin.setValue(value)
+        self.smoothing_spin.blockSignals(False)
+
+    def _update_smoothing_from_spin(self):
+        """Update smoothing slider when spinbox changes"""
+        value = self.smoothing_spin.value()
+        self.smoothing_value = value
+        self.smoothing_slider.blockSignals(True)
+        self.smoothing_slider.setValue(int(value * 100))
+        self.smoothing_slider.blockSignals(False)
+
+    def _update_psf_from_slider(self):
+        """Update PSF spinbox when slider changes"""
+        sender = self.sender()
+        value = sender.value() / 10.0  # Map 1-100 to 0.1-10.0
+        self.psf_size_value = value
+
+        # Find and update the corresponding spinbox
+        operation = self.selected_operation
+        if operation == 'deconvolution-stars':
+            self.deconv_stars_psf_spin.blockSignals(True)
+            self.deconv_stars_psf_spin.setValue(value)
+            self.deconv_stars_psf_spin.blockSignals(False)
+        elif operation == 'deconvolution-object':
+            self.deconv_object_psf_spin.blockSignals(True)
+            self.deconv_object_psf_spin.setValue(value)
+            self.deconv_object_psf_spin.blockSignals(False)
+
+    def _update_psf_from_spin(self):
+        """Update PSF slider when spinbox changes"""
+        sender = self.sender()
+        value = sender.value()
+        self.psf_size_value = value
+
+        # Find and update the corresponding slider
+        operation = self.selected_operation
+        if operation == 'deconvolution-stars':
+            self.deconv_stars_psf_slider.blockSignals(True)
+            self.deconv_stars_psf_slider.setValue(int(value * 10))
+            self.deconv_stars_psf_slider.blockSignals(False)
+        elif operation == 'deconvolution-object':
+            self.deconv_object_psf_slider.blockSignals(True)
+            self.deconv_object_psf_slider.setValue(int(value * 10))
+            self.deconv_object_psf_slider.blockSignals(False)
+
+    def _update_correction_type(self, value):
+        """Update correction type value"""
+        self.correction_type_value = value
+
+    def _update_keep_bg(self, checked):
+        """Update keep background value"""
+        self.keep_bg_value = checked
+
+    def _update_batch_size(self, value):
+        """Update batch size value"""
+        self.batch_size_value = value
+
+    def _update_gpu_acceleration(self, checked):
+        """Update GPU acceleration value"""
+        self.gpu_acceleration_value = checked
+
+    def _on_operation_dropdown_changed(self, display_name):
+        """Handle operation selection change from dropdown"""
+        # Map display name back to operation key
+        operation_keys = list(self.operations.keys())
+        operation_names = list(self.operations.values())
+        try:
+            index = operation_names.index(display_name)
+            operation = operation_keys[index]
+            self.selected_operation = operation
+        except ValueError:
+            operation = self.selected_operation or 'bge'
+
+        self._on_operation_selected()
+
+    def _on_operation_selected(self):
+        """Handle operation selection change"""
+        operation = self.selected_operation
+
+        # Update the processor based on the selected operation
+        if operation == 'denoise':
+            self.processor = DenoiserProcessing(self.siril)
+            model_path = self.processor.check_config_file()
+            self.model_path = model_path or ""
+        elif operation == 'bge':
+            self.processor = BGEProcessing(self.siril)
+            model_path = self.processor.check_config_file()
+            self.model_path = model_path or ""
+        elif operation in ['deconvolution-stars', 'deconvolution-object']:
+            self.processor = DeconvolutionProcessing(self.siril)
+            model_path = self.processor.check_config_file(operation)
+            self.model_path = model_path or ""
+
+        # Update model dropdown based on operation
+        self._populate_model_dropdown()
+
+        # Show the appropriate parameter widget using QStackedWidget
+        if operation in self.operation_widget_map:
+            index_to_show = self.operation_widget_map[operation]
+            self.params_stack.setCurrentIndex(index_to_show)
+
+        # Update the window title
+        op_display_name = self.operations.get(operation, "Operation")
+        self.setWindowTitle(f"GraXpert AI {op_display_name} - Siril interface v{VERSION}")
+
+        # Resize window to fit new content
+        self.adjustSize()
+
+    def load_model_manager(self):
+        """Load a model manager dialog"""
+        model_manager = GraXpertModelManager(self, self.siril, self.update_dropdowns)
+        model_manager.show_dialog()
+
+    def update_dropdowns(self):
+        """Update dropdowns after model manager operations"""
+        self._populate_model_dropdown()
+        self._populate_operations_dropdown()
+
+    def _populate_operations_dropdown(self):
+        """
+        Rescans available operations and updates the operations dropdown.
+        Should be called when new operations are downloaded or become available.
+        """
+        # Get the most up-to-date operations
+        self.operations = get_available_local_operations()
+
+        # Convert operations dict to display names for dropdown
+        operation_names = list(self.operations.values())
+        operation_keys = list(self.operations.keys())
+
+        # Update the dropdown with new values
+        self.op_dropdown.clear()
+        self.op_dropdown.addItems(operation_names)
+
+        # Get the current selected operation key (if any)
+        current_key = self.selected_operation
+
+        if current_key and current_key in self.operations:
+            # If current selection is still available, keep it selected
+            display_name = self.operations[current_key]
+            index = operation_names.index(display_name)
+            self.op_dropdown.setCurrentIndex(index)
+        elif operation_keys:
+            # Otherwise select the first available operation
+            first_key = operation_keys[0]
+            self.selected_operation = first_key
+            self.op_dropdown.setCurrentIndex(0)
+            # Since selection changed, update processor and UI
+            self._on_operation_selected()
+        else:
+            # If no operations are available
+            self.op_dropdown.addItem("No operations available")
+            self.selected_operation = ""
+
+        # Update window title
+        if self.selected_operation and self.selected_operation in self.operations:
+            op_display_name = self.operations[self.selected_operation]
+            self.setWindowTitle(f"GraXpert AI {op_display_name} - Siril interface v{VERSION}")
+        else:
+            self.setWindowTitle(f"GraXpert AI - Siril interface v{VERSION}")
+
+    def _populate_model_dropdown(self):
+        """Populate the model dropdown with available models for the current operation"""
+        operation = self.selected_operation
+
+        # Get model directory name based on operation
+        model_dir = None
+        if operation == 'denoise':
+            model_dir = "denoise-ai-models"
+        elif operation == 'bge':
+            model_dir = "bge-ai-models"
+        elif operation == 'deconvolution-stars':
+            model_dir = "deconvolution-stars-ai-models"
+        elif operation == 'deconvolution-object':
+            model_dir = "deconvolution-object-ai-models"
+        else:
+            # Default to denoise models if operation not recognized
+            model_dir = "denoise-ai-models"
+
+        # Dictionary to store model name -> full path mapping
+        model_paths = get_available_local_models(model_dir)
+
+        # Update the dropdown values
+        self.model_dropdown.clear()
+        if model_paths:
+            # Sort model names alphabetically
+            model_names = sorted(model_paths.keys())
+            self.model_dropdown.addItems(model_names)
+
+            # Store the full path mapping for when selection changes
+            self.model_path_mapping = model_paths
+
+            # Get the previously selected model path
+            current_path = self.model_path
+
+            # Find the model name associated with the current path
+            selected_model = None
+            for name, path in model_paths.items():
+                if path == current_path:
+                    selected_model = name
+                    break
+
+            if selected_model and selected_model in model_names:
+                # Set the dropdown to the previously selected model
+                index = model_names.index(selected_model)
+                self.model_dropdown.setCurrentIndex(index)
+            else:
+                # If no match found or no previous selection, select the first model
+                self.model_dropdown.setCurrentIndex(0)
+                if model_names:
+                    selected_model = model_names[0]
+                    self.model_path = model_paths[selected_model]
+        else:
+            self.model_dropdown.addItem("No models found")
+            self.model_path = ""
+
+    def _on_model_selected(self):
+        """Update the model_path when a model is selected from dropdown"""
+        selected_model = self.model_dropdown.currentText()
+        if selected_model in self.model_path_mapping:
+            # Set the full path
+            self.model_path = self.model_path_mapping[selected_model]
+
+            # Save config with updated model path
+            if self.processor:
+                self.processor.save_config_file(self.model_path)
+                # Reset the cached image to force recalculation
+                self.processor.reset_cache()
+
+    def _on_apply(self):
+        """
+        Handle the 'Apply' button click event.
+        This method starts the appropriate processing thread based on the current state.
+        """
+        model_path = self.model_path
+        operation = self.selected_operation
+
+        # Get processing parameters from UI
+        batch_size = self.batch_size_value
+        gpu_acceleration = self.gpu_acceleration_value
+
+        # Validate model path
+        if not model_path or not os.path.isfile(model_path):
+            QMessageBox.critical(self, "Error", "Please select a valid ONNX model file.")
+            return
+
+        if self.siril.is_image_loaded():
+            if operation == "bge":
+                correction_type = self.correction_type_value
+                smoothing = self.smoothing_value
+
+                # Cache the original image
+                self.processor.cached_original_image = self.siril.get_image_pixeldata()
+
+                # Reshape mono images to 3D with a channels size of 1
+                if self.processor.cached_original_image.ndim == 2:
+                    self.processor.cached_original_image = self.processor.cached_original_image[np.newaxis, ...]
+
+                filename = None
+                header = None
+                keep_bg = self.keep_bg_value
+                if keep_bg:
+                    filename = self.siril.get_image_filename()
+                    header = self.siril.get_image_fits_header()
+
+                # Start image processing thread
+                threading.Thread(
+                    target=self.processor.process_image,
+                    args=(
+                        model_path,
+                        correction_type,
+                        smoothing,
+                        keep_bg,
+                        filename,
+                        header,
+                        gpu_acceleration,
+                        self._update_progress
+                    ),
+                    daemon=True
+                ).start()
+
+            elif operation == "denoise":
+                strength = self.strength_value
+                if self.processor.cached_processed_image is None:
+                    # Cache the original image if this is first-time processing
+                    self.processor.cached_original_image = self.siril.get_image_pixeldata()
+
+                    # Reshape mono images to 3D with a channels size of 1
+                    if self.processor.cached_original_image.ndim == 2:
+                        self.processor.cached_original_image = self.processor.cached_original_image[np.newaxis, ...]
+
+                    # Start image processing thread
+                    threading.Thread(
+                        target=self.processor.process_image,
+                        args=(model_path, strength, batch_size,
+                            gpu_acceleration, self._update_progress),
+                        daemon=True
+                    ).start()
+                else:
+                    # Apply operation-specific blend
+                    threading.Thread(
+                        target=lambda: self.processor.apply_blend(strength),
+                        daemon=True
+                    ).start()
+
+            elif operation in ["deconvolution-stars", "deconvolution-object"]:
+                strength = self.strength_value
+                psf_size = self.psf_size_value
+
+                if self.processor.cached_processed_image is None:
+                    # Cache the original image if this is first-time processing
+                    self.processor.cached_original_image = self.siril.get_image_pixeldata()
+
+                # Reshape mono images to 3D with a channels size of 1
+                if self.processor.cached_original_image.ndim == 2:
+                    self.processor.cached_original_image = self.processor.cached_original_image[np.newaxis, ...]
+
+                deconv_type = "stars" if operation == "deconvolution-stars" else "object"
+                self._update_progress(f"Processing image with {deconv_type} deconvolution (PSF size: {psf_size:.2f}, strength: {strength:.2f})")
+
+                threading.Thread(
+                    target=self.processor.process_image,
+                    args=(model_path, strength, psf_size, batch_size,
+                          gpu_acceleration, self._update_progress),
+                    daemon=True
+                ).start()
+
+        elif self.siril.is_sequence_loaded():
+            sequence_name = self.siril.get_seq().seqname
+
+            if operation == "bge":
+                correction_type = self.correction_type_value
+                smoothing = self.smoothing_value
+                keep_bg = self.keep_bg_value
+
+                # Start sequence processing thread
+                threading.Thread(
+                    target=self.processor.process_sequence,
+                    args=(sequence_name, model_path, correction_type, smoothing,
+                        keep_bg, gpu_acceleration, self._update_progress),
+                    daemon=True
+                ).start()
+
+            elif operation == "denoise":
+                strength = self.strength_value
+
+                # Start sequence processing thread
+                threading.Thread(
+                    target=self.processor.process_sequence,
+                    args=(sequence_name, model_path, strength, batch_size,
+                        gpu_acceleration, self._update_progress),
+                    daemon=True
+                ).start()
+
+            elif operation in ["deconvolution-stars", "deconvolution-object"]:
+                strength = self.strength_value
+                psf_size = self.psf_size_value
+
+                deconv_type = "stars" if operation == "deconvolution-stars" else "object"
+                self._update_progress(f"Processing {sequence_name} with {deconv_type} deconvolution (PSF size: {psf_size:.2f}, strength: {strength:.2f})")
+
+                threading.Thread(
+                    target=self.processor.process_sequence,
+                    args=(sequence_name, model_path, strength, psf_size, batch_size,
+                        gpu_acceleration, self._update_progress),
+                    daemon=True
+                ).start()
+        else:
+            QMessageBox.critical(self, "Error", "No sequence or image is loaded.")
+
+    def _update_progress(self, message, progress=0):
+        """Update progress message"""
+        self.progress_label.setText(message)
+        self.siril.update_progress(message, progress)
+
+    def closeEvent(self, event):
+        """Handle window close event"""
+        self.siril.disconnect()
+        event.accept()
+
+class GraXpertModelManager(QDialog):
     def __init__(self, parent, siril, callback=None):
         """
         Initialize the GraXpert Model Manager dialog.
@@ -330,21 +1118,24 @@ class GraXpertModelManager:
         Args:
             parent: The parent window/widget
         """
+        super().__init__(parent)
         self.parent = parent
         self.siril = siril
-        self.callback=callback
+        self.callback = callback
         self.models_by_operation = {}
         self.initialized = False
 
         # Check GraXpert version and set up operations accordingly
         graxpert_executable = get_executable(siril)
         if graxpert_executable is None:
-            messagebox.showerror("GraXpert not found", "Please set the location of the GraXpert executable in Siril Preferences -> Miscellaneous")
-            return None
+            QMessageBox.critical(self, "GraXpert not found",
+                               "Please set the location of the GraXpert executable in Siril Preferences -> Miscellaneous")
+            return
         check_graxpert_version(graxpert_executable)
         if _graxpert_version is None:
-            messagebox.showerror("Error checking GraXpert version", "Please check the location of the GraXpert executable in Siril Preferences -> Miscellaneous")
-            return None
+            QMessageBox.critical(self, "Error checking GraXpert version",
+                               "Please check the location of the GraXpert executable in Siril Preferences -> Miscellaneous")
+            return
         self.operations = get_available_operations()
 
         self.operation_cmd_map = {
@@ -357,232 +1148,210 @@ class GraXpertModelManager:
 
     def show_dialog(self):
         """Show the model manager dialog"""
-        self.dialog = tk.Toplevel(self.parent)
-        self.dialog.title("GraXpert Model Manager")
-        self.dialog.geometry("600x600")
-        self.dialog.minsize(500, 400)
-        self.dialog.transient(self.parent)
-        self.dialog.grab_set()
+        self.setWindowTitle("GraXpert Model Manager")
+        self.resize(600, 600)
+        self.setMinimumSize(500, 400)
+        self.setModal(True)
 
         self.create_widgets()
-        self.dialog.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # Start refreshing the model list
         self.refresh_models()
 
         # Position the dialog relative to the parent window
         self.center_dialog()
+        self.show()
 
     def center_dialog(self):
         """Center the dialog on the parent window"""
-        self.dialog.update_idletasks()
-        parent_x = self.parent.winfo_rootx()
-        parent_y = self.parent.winfo_rooty()
-        parent_width = self.parent.winfo_width()
-        parent_height = self.parent.winfo_height()
+        if self.parent:
+            parent_geometry = self.parent.geometry()
+            dialog_geometry = self.geometry()
 
-        dialog_width = self.dialog.winfo_width()
-        dialog_height = self.dialog.winfo_height()
+            x = parent_geometry.x() + (parent_geometry.width() - dialog_geometry.width()) // 2
+            y = parent_geometry.y() + (parent_geometry.height() - dialog_geometry.height()) // 2
 
-        x = parent_x + (parent_width - dialog_width) // 2
-        y = parent_y + (parent_height - dialog_height) // 2
-
-        self.dialog.geometry(f"+{x}+{y}")
+            self.move(x, y)
 
     def create_widgets(self):
         """Create the widgets for the dialog"""
-        main_frame = ttk.Frame(self.dialog, padding="10")
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(5)
 
         # Operation selection
-        op_frame = ttk.LabelFrame(main_frame, text="Operation", padding="5")
-        op_frame.pack(fill=tk.X, pady=5)
+        op_group = QGroupBox("Operation")
+        op_layout = QGridLayout(op_group)
 
-        self.operation_var = tk.StringVar(value="bge")
+        self.operation_group = QButtonGroup()
+        self.operation_buttons = {}
 
         max_columns = 2
         for i, (op_key, op_name) in enumerate(self.operations.items()):
             row = i // max_columns
             column = i % max_columns
-            ttk.Radiobutton(
-                op_frame,
-                text=op_name,
-                value=op_key,
-                variable=self.operation_var,
-                command=self.on_operation_changed
-            ).grid(row=row, column=column, padx=10, pady=5, sticky="w")
 
-        # Center the grid frame in its parent container
-        op_frame.grid_columnconfigure(0, weight=1)
-        op_frame.grid_columnconfigure(1, weight=1)
+            radio_btn = QRadioButton(op_name)
+            radio_btn.setObjectName(op_key)  # Store the key as object name
+            self.operation_group.addButton(radio_btn, i)
+            self.operation_buttons[op_key] = radio_btn
+
+            op_layout.addWidget(radio_btn, row, column)
+
+        # Set default selection
+        if 'bge' in self.operation_buttons:
+            self.operation_buttons['bge'].setChecked(True)
+
+        self.operation_group.buttonClicked.connect(self.on_operation_changed)
+        layout.addWidget(op_group)
 
         # Model list frame
-        model_frame = ttk.LabelFrame(main_frame, text="Models Available Remotely", padding="5")
-        model_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        model_group = QGroupBox("Models Available Remotely")
+        model_layout = QVBoxLayout(model_group)
 
-        # Create a frame with scrollbar for the models list
-        list_frame = ttk.Frame(model_frame)
-        list_frame.pack(fill=tk.BOTH, expand=True)
+        self.model_listbox = QListWidget()
+        self.model_listbox.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        model_layout.addWidget(self.model_listbox)
 
-        scrollbar = ttk.Scrollbar(list_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self.model_listbox = tk.Listbox(
-            list_frame,
-            selectmode=tk.SINGLE,
-            yscrollcommand=scrollbar.set,
-            font=("TkDefaultFont", 11)
-        )
-        self.model_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=self.model_listbox.yview)
+        layout.addWidget(model_group)
 
         # Status section
-        self.status_var = tk.StringVar(value="Ready")
-        status_frame = ttk.Frame(main_frame)
-        status_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(status_frame, text="Status:").pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Label(status_frame, textvariable=self.status_var).pack(side=tk.LEFT)
+        status_layout = QHBoxLayout()
+        status_layout.addWidget(QLabel("Status:"))
+        self.status_label = QLabel("Ready")
+        status_layout.addWidget(self.status_label)
+        status_layout.addStretch()
+        layout.addLayout(status_layout)
 
         # Buttons
-        buttons_frame = ttk.Frame(main_frame)
-        buttons_frame.pack(fill=tk.X, pady=10)
+        buttons_layout = QHBoxLayout()
 
-        self.refresh_btn = ttk.Button(
-            buttons_frame,
-            text="Refresh",
-            command=self.refresh_models
-        )
-        self.refresh_btn.pack(side=tk.LEFT, padx=5)
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.clicked.connect(self.refresh_models)
+        buttons_layout.addWidget(self.refresh_btn)
 
-        self.download_btn = ttk.Button(
-            buttons_frame,
-            text="Download Selected Model",
-            command=self.download_selected_model,
-            state=tk.DISABLED
-        )
-        self.download_btn.pack(side=tk.RIGHT, padx=5)
+        buttons_layout.addStretch()
 
-        self.close_btn = ttk.Button(
-            buttons_frame,
-            text="Close",
-            command=self.on_close
-        )
-        self.close_btn.pack(side=tk.RIGHT, padx=5)
+        self.close_btn = QPushButton("Close")
+        self.close_btn.clicked.connect(self.close)
+        buttons_layout.addWidget(self.close_btn)
+
+        self.download_btn = QPushButton("Download Selected Model")
+        self.download_btn.clicked.connect(self.download_selected_model)
+        self.download_btn.setEnabled(False)
+        buttons_layout.addWidget(self.download_btn)
+
+        layout.addLayout(buttons_layout)
 
         # Progress bar
-        self.progress_var = tk.DoubleVar(value=0.0)
-        self.progress_bar = ttk.Progressbar(
-            main_frame,
-            variable=self.progress_var,
-            mode="indeterminate"
-        )
-        self.progress_bar.pack(fill=tk.X, pady=5)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)  # Initially hidden
+        layout.addWidget(self.progress_bar)
 
     def on_operation_changed(self):
         """Handle operation change event"""
-        operation = self.operation_var.get()
-        self.update_model_list(operation)
+        checked_button = self.operation_group.checkedButton()
+        if checked_button:
+            operation = checked_button.objectName()
+            self.update_model_list(operation)
 
     def update_model_list(self, operation):
         """Update the model list based on the selected operation"""
-        self.model_listbox.delete(0, tk.END)
-        self.download_btn.config(state=tk.DISABLED)
+        self.model_listbox.clear()
+        self.download_btn.setEnabled(False)
 
         if operation in self.models_by_operation:
             models = self.models_by_operation[operation]
             if models:
                 for model in models:
-                    self.model_listbox.insert(tk.END, model)
-                self.model_listbox.selection_set(0)
-                self.download_btn.config(state=tk.NORMAL)
+                    self.model_listbox.addItem(model)
+                if self.model_listbox.count() > 0:
+                    self.model_listbox.setCurrentRow(0)
+                    self.download_btn.setEnabled(True)
             else:
-                self.model_listbox.insert(tk.END, "No models available")
+                self.model_listbox.addItem("No models available")
         else:
-            self.model_listbox.insert(tk.END, "Click Refresh to check available models")
+            self.model_listbox.addItem("Click Refresh to check available models")
 
     def refresh_models(self):
         """Refresh the available models list"""
-        operation = self.operation_var.get()
-        self.status_var.set(f"Checking available models for {self.operations[operation]}...")
-        self.progress_bar.start()
-        self.refresh_btn.config(state=tk.DISABLED)
-        self.download_btn.config(state=tk.DISABLED)
+        checked_button = self.operation_group.checkedButton()
+        if not checked_button:
+            return
+
+        operation = checked_button.objectName()
+        operation_name = self.operations[operation]
+
+        self.status_label.setText(f"Checking available models for {operation_name}...")
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 0)  # Indeterminate progress
+        self.refresh_btn.setEnabled(False)
+        self.download_btn.setEnabled(False)
 
         # Start a thread to avoid blocking the UI
-        threading.Thread(target=self._fetch_models_thread, args=(operation,), daemon=True).start()
-
-    def _fetch_models_thread(self, operation):
-        """Background thread to fetch models"""
-        models = self.check_ai_versions(operation)
-
-        # Update UI in the main thread
-        self.dialog.after(0, lambda: self._update_after_fetch(operation, models))
+        self.fetch_thread = ModelFetchThread(self, operation)
+        self.fetch_thread.finished.connect(self._update_after_fetch)
+        self.fetch_thread.start()
 
     def _update_after_fetch(self, operation, models):
         """Update UI after fetching models"""
         if self.callback:
-            self.dialog.after(0, self.callback())
-        self.progress_bar.stop()
-        self.refresh_btn.config(state=tk.NORMAL)
+            self.callback()
+
+        self.progress_bar.setVisible(False)
+        self.refresh_btn.setEnabled(True)
 
         if models:
             self.models_by_operation[operation] = models
-            self.status_var.set(f"Found {len(models)} models for {self.operations[operation]}")
+            operation_name = self.operations[operation]
+            self.status_label.setText(f"Found {len(models)} models for {operation_name}")
             self.update_model_list(operation)
         else:
             self.models_by_operation[operation] = []
-            self.status_var.set("Failed to retrieve models. Check GraXpert installation.")
-            self.model_listbox.delete(0, tk.END)
-            self.model_listbox.insert(tk.END, "Error retrieving models")
+            self.status_label.setText("Failed to retrieve models. Check GraXpert installation.")
+            self.model_listbox.clear()
+            self.model_listbox.addItem("Error retrieving models")
 
     def download_selected_model(self):
         """Download the selected model"""
-        operation = self.operation_var.get()
-        selection = self.model_listbox.curselection()
-
-        if not selection:
-            messagebox.showerror("Selection Error", "Please select a model to download")
+        checked_button = self.operation_group.checkedButton()
+        if not checked_button:
             return
 
-        model_version = self.model_listbox.get(selection[0])
+        operation = checked_button.objectName()
+        current_item = self.model_listbox.currentItem()
 
-        self.status_var.set(f"Downloading {model_version}...")
-        self.progress_bar.start()
-        self.download_btn.config(state=tk.DISABLED)
-        self.refresh_btn.config(state=tk.DISABLED)
+        if not current_item:
+            QMessageBox.critical(self, "Selection Error", "Please select a model to download")
+            return
+
+        model_version = current_item.text()
+
+        self.status_label.setText(f"Downloading {model_version}...")
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 0)  # Indeterminate progress
+        self.download_btn.setEnabled(False)
+        self.refresh_btn.setEnabled(False)
 
         # Start a thread to download the model
-        threading.Thread(
-            target=self._download_model_thread,
-            args=(operation, model_version),
-            daemon=True
-        ).start()
-
-    def _download_model_thread(self, operation, version):
-        """Background thread to download model"""
-        success = self.download_model(operation, version)
-
-        # Update UI in the main thread
-        self.dialog.after(0, lambda: self._update_after_download(success, version))
+        self.download_thread = ModelDownloadThread(self, operation, model_version)
+        self.download_thread.finished.connect(self._update_after_download)
+        self.download_thread.start()
 
     def _update_after_download(self, success, version):
         """Update UI after downloading model"""
-        self.progress_bar.stop()
-        self.refresh_btn.config(state=tk.NORMAL)
-        self.download_btn.config(state=tk.NORMAL)
+        self.progress_bar.setVisible(False)
+        self.refresh_btn.setEnabled(True)
+        self.download_btn.setEnabled(True)
 
         if success:
-            self.status_var.set(f"Successfully downloaded model {version}")
-            messagebox.showinfo("Download Complete", f"Model {version} has been downloaded successfully.")
+            self.status_label.setText(f"Successfully downloaded model {version}")
+            QMessageBox.information(self, "Download Complete",
+                                  f"Model {version} has been downloaded successfully.")
         else:
-            self.status_var.set("Failed to download model")
-            messagebox.showerror("Download Failed", "Failed to download the selected model. Check the logs for details.")
-
-    def on_close(self):
-        """Handle dialog close"""
-        self.dialog.grab_release()
-        self.dialog.destroy()
+            self.status_label.setText("Failed to download model")
+            QMessageBox.critical(self, "Download Failed",
+                               "Failed to download the selected model. Check the logs for details.")
 
     def check_ai_versions(self, operation):
         """
@@ -770,7 +1539,6 @@ class GraXpertModelManager:
 
                 if success:
                     print("Download succeeded")
-                    self.dialog.after(0, self.callback)
                     return True
                 else:
                     print("Download failed")
@@ -786,6 +1554,33 @@ class GraXpertModelManager:
                         os.unlink(temp_fits_path)
                 except:
                     pass
+
+class ModelFetchThread(QThread):
+    """Thread for fetching models without blocking UI"""
+    finished = pyqtSignal(str, list)  # operation, models
+
+    def __init__(self, manager, operation):
+        super().__init__()
+        self.manager = manager
+        self.operation = operation
+
+    def run(self):
+        models = self.manager.check_ai_versions(self.operation)
+        self.finished.emit(self.operation, models or [])
+
+class ModelDownloadThread(QThread):
+    """Thread for downloading models without blocking UI"""
+    finished = pyqtSignal(bool, str)  # success, version
+
+    def __init__(self, manager, operation, version):
+        super().__init__()
+        self.manager = manager
+        self.operation = operation
+        self.version = version
+
+    def run(self):
+        success = self.manager.download_model(self.operation, self.version)
+        self.finished.emit(success, self.version)
 
 class DenoiserProcessing:
     """Class encapsulating the core image processing functionality for GraXpert AI Denoise."""
@@ -2246,780 +3041,6 @@ class BGEProcessing:
             print(f"Error: {str(e)}")
             return False
 
-class GUIInterface:
-    """Class providing the GUI interface for GraXpert AI Operations."""
-
-    def __init__(self, root, siril):
-        if not siril:
-            raise ValueError("No SirilInterface provided to GUIInterface()")
-        self.root = root
-        self.root.title(f"GraXpert AI - Siril interface v{VERSION}")
-        self.root.resizable(False, False)
-
-        self.style = tksiril.standard_style()
-
-        self.model_manager = None
-        self.action_frame = None
-
-        self.siril = siril
-        # Get available operations
-        self.operations = get_available_local_operations()
-        self.selected_operation = tk.StringVar()
-
-        # Initialize processor reference (will be set based on operation)
-        self.processor = None
-
-        image_loaded = self.siril.is_image_loaded()
-        seq_loaded = self.siril.is_sequence_loaded()
-        if not (image_loaded or seq_loaded):
-            self.siril.error_messagebox("No image or sequence loaded")
-            self.close_dialog()
-            return
-
-        try:
-            self.siril.cmd("requires", "1.4.0-beta2")
-        except s.CommandError:
-            self.close_dialog()
-            return
-
-        # Initialize variables for UI
-        self.model_path_var = tk.StringVar(value="")
-        self.strength_var = tk.DoubleVar(value=0.5)
-        self.smoothing_var = tk.DoubleVar(value=0.5)
-        self.psf_size_var = tk.DoubleVar(value=5.0)  # Default PSF size value
-        self.batch_size_var = tk.IntVar(value=4)
-        self.keep_bg_var = tk.BooleanVar(value=False)
-        self.gpu_acceleration_var = tk.BooleanVar(value=True)
-        self.model_path_mapping = {}
-
-        tksiril.match_theme_to_siril(self.root, self.siril)
-
-        self.siril.log("This script is under ongoing development. Please report any bugs to "
-            "https://gitlab.com/free-astro/siril-scripts. We are also especially keen "
-            "for confirmation of success / failure from Linux users with AMD Radeon "
-            "or Intel ARC GPUs as we do not have these hardware / OS combinations among "
-            "the development team", color=s.LogColor.BLUE)
-        # Create widgets
-        self.create_widgets()
-
-        # Set default operation to denoise
-        if 'bge' in self.operations:
-            self.selected_operation.set('bge')
-            # Set the corresponding display name in the dropdown
-            if 'bge' in self.operations:
-                op_display_name = self.operations['bge']
-                self.operation_display_var.set(op_display_name)
-            self._on_operation_selected(None)  # Initialize the correct processor
-
-        # Set progress label
-        if image_loaded:
-            self._update_progress("Single image loaded: will process this image only")
-        else:
-            self._update_progress("Sequence loaded: will process selected frames of the sequence")
-
-    def create_widgets(self):
-        """ Create Tk widgets to provide the script GUI"""
-        main_frame = ttk.Frame(self.root, padding=10)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-
-        # Title and version
-        title_label = ttk.Label(
-            main_frame,
-            text="GraXpert AI",
-            style="Header.TLabel"
-        )
-        title_label.pack(pady=(0, 5))
-        version_label = ttk.Label(main_frame, text=f"Script version: {VERSION}")
-        version_label.pack(pady=(0, 10))
-
-        # Separator
-        sep = ttk.Separator(main_frame, orient='horizontal')
-        sep.pack(fill=tk.X, pady=5)
-
-        # Operation selection frame
-        op_frame = ttk.Frame(main_frame)
-        op_frame.pack(fill=tk.X, pady=5)
-
-        op_label = ttk.Label(op_frame, text="Operation:")
-        op_label.pack(side=tk.LEFT, padx=5)
-
-        # Convert operations dict to display names for dropdown
-        operation_names = list(self.operations.values())
-        operation_keys = list(self.operations.keys())
-
-        # Create a separate variable for the display name
-        self.operation_display_var = tk.StringVar()
-
-        self.op_dropdown = ttk.Combobox(
-            op_frame,
-            textvariable=self.operation_display_var,  # Use display variable instead
-            state="readonly",
-            values=operation_names,  # Display names, not keys
-            width=20
-        )
-        self.op_dropdown.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        tksiril.create_tooltip(self.op_dropdown, "Select which GraXpert AI operation to perform")
-
-        # Bind operation selection event
-        self.op_dropdown.bind("<<ComboboxSelected>>", self._on_operation_selected)
-
-        # Model selection frame
-        model_frame = ttk.Frame(main_frame)
-        model_frame.pack(fill=tk.X, pady=5)
-
-        # Model label
-        model_label = ttk.Label(model_frame, text="Select Model:")
-        model_label.pack(side=tk.LEFT, padx=5)
-
-        # Create a separate variable for the display name
-        self.model_name_var = tk.StringVar()
-
-        # Create the model dropdown
-        self.model_dropdown = ttk.Combobox(
-            model_frame,
-            textvariable=self.model_name_var,
-            state="readonly",
-            width=40
-        )
-        self.model_dropdown.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        tksiril.create_tooltip(self.model_dropdown, "Select a GraXpert AI model. "
-                "Models can be downloaded using the GraXpert Model Manager button")
-
-        # Parameters Frame - will contain operation-specific parameters
-        self.params_frame = ttk.LabelFrame(main_frame, text="Parameters")
-        self.params_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        # Create frames for each operation's parameters (initially hidden)
-        self.operation_frames = {}
-
-        # Denoise operation parameters
-        denoise_frame = ttk.Frame(self.params_frame)
-        self.operation_frames['denoise'] = denoise_frame
-
-        # Strength slider for denoise
-        strength_frame = ttk.Frame(denoise_frame)
-        strength_frame.pack(fill=tk.X, padx=5, pady=5)
-        strength_label = ttk.Label(strength_frame, text="Strength:")
-        strength_label.pack(side=tk.LEFT, padx=5)
-        strength_slider = ttk.Scale(
-            strength_frame,
-            from_=0.0,
-            to=1.0,
-            orient=tk.HORIZONTAL,
-            variable=self.strength_var,
-            length=200
-        )
-        strength_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.strength_value = ttk.Label(strength_frame, text="0.5")
-        self.strength_value.pack(side=tk.RIGHT, padx=5)
-        tksiril.create_tooltip(strength_slider, "Adjust the denoising strength. The "
-                "result is a linear blend of the denoised image and the original, "
-                "with the mixture of the two images controlled by the strength "
-                "parameter.")
-        self.strength_var.trace_add("write", self._update_strength_label)
-
-        # Deconvolution operations parameters (for both stars and object)
-        deconv_stars_frame = ttk.Frame(self.params_frame)
-        self.operation_frames['deconvolution-stars'] = deconv_stars_frame
-        deconv_object_frame = ttk.Frame(self.params_frame)
-        self.operation_frames['deconvolution-object'] = deconv_object_frame
-
-        # Strength slider for deconvolution (stars) - same as denoise
-        deconv_stars_strength_frame = ttk.Frame(deconv_stars_frame)
-        deconv_stars_strength_frame.pack(fill=tk.X, padx=5, pady=5)
-        deconv_stars_strength_label = ttk.Label(deconv_stars_strength_frame, text="Strength:")
-        deconv_stars_strength_label.pack(side=tk.LEFT, padx=5)
-        deconv_stars_strength_slider = ttk.Scale(
-            deconv_stars_strength_frame,
-            from_=0.0,
-            to=1.0,
-            orient=tk.HORIZONTAL,
-            variable=self.strength_var,
-            length=200
-        )
-        deconv_stars_strength_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.deconv_stars_strength_value = ttk.Label(deconv_stars_strength_frame, text="0.5")
-        self.deconv_stars_strength_value.pack(side=tk.RIGHT, padx=5)
-        tksiril.create_tooltip(deconv_stars_strength_slider, "Adjust the deconvolution strength. The "
-                "result is a linear blend of the deconvolved image and the original, "
-                "with the mixture of the two images controlled by the strength "
-                "parameter.")
-        self.strength_var.trace_add("write", self._update_deconv_stars_strength_label)
-
-        # PSF Size slider for deconvolution (stars)
-        deconv_stars_psf_frame = ttk.Frame(deconv_stars_frame)
-        deconv_stars_psf_frame.pack(fill=tk.X, padx=5, pady=5)
-        deconv_stars_psf_label = ttk.Label(deconv_stars_psf_frame, text="PSF Size:")
-        deconv_stars_psf_label.pack(side=tk.LEFT, padx=5)
-        deconv_stars_psf_slider = ttk.Scale(
-            deconv_stars_psf_frame,
-            from_=0.1,
-            to=10.0,
-            orient=tk.HORIZONTAL,
-            variable=self.psf_size_var,
-            length=200
-        )
-        deconv_stars_psf_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.deconv_stars_psf_value = ttk.Label(deconv_stars_psf_frame, text="5.0")
-        self.deconv_stars_psf_value.pack(side=tk.RIGHT, padx=5)
-        tksiril.create_tooltip(deconv_stars_psf_slider, "Adjust the PSF (Point Spread Function) size "
-                "for star deconvolution. Values from 0.1 to 10.0 are allowed.")
-        self.psf_size_var.trace_add("write", self._update_deconv_stars_psf_label)
-
-        # Strength slider for deconvolution (object) - same as denoise
-        deconv_object_strength_frame = ttk.Frame(deconv_object_frame)
-        deconv_object_strength_frame.pack(fill=tk.X, padx=5, pady=5)
-        deconv_object_strength_label = ttk.Label(deconv_object_strength_frame, text="Strength:")
-        deconv_object_strength_label.pack(side=tk.LEFT, padx=5)
-        deconv_object_strength_slider = ttk.Scale(
-            deconv_object_strength_frame,
-            from_=0.0,
-            to=1.0,
-            orient=tk.HORIZONTAL,
-            variable=self.strength_var,
-            length=200
-        )
-        deconv_object_strength_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.deconv_object_strength_value = ttk.Label(deconv_object_strength_frame, text="0.5")
-        self.deconv_object_strength_value.pack(side=tk.RIGHT, padx=5)
-        tksiril.create_tooltip(deconv_object_strength_slider, "Adjust the deconvolution strength. The "
-                "result is a linear blend of the deconvolved image and the original, "
-                "with the mixture of the two images controlled by the strength "
-                "parameter.")
-        self.strength_var.trace_add("write", self._update_deconv_object_strength_label)
-
-        # PSF Size slider for deconvolution (object)
-        deconv_object_psf_frame = ttk.Frame(deconv_object_frame)
-        deconv_object_psf_frame.pack(fill=tk.X, padx=5, pady=5)
-        deconv_object_psf_label = ttk.Label(deconv_object_psf_frame, text="PSF Size:")
-        deconv_object_psf_label.pack(side=tk.LEFT, padx=5)
-        deconv_object_psf_slider = ttk.Scale(
-            deconv_object_psf_frame,
-            from_=0.1,
-            to=10.0,
-            orient=tk.HORIZONTAL,
-            variable=self.psf_size_var,
-            length=200
-        )
-        deconv_object_psf_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.deconv_object_psf_value = ttk.Label(deconv_object_psf_frame, text="5.0")
-        self.deconv_object_psf_value.pack(side=tk.RIGHT, padx=5)
-        tksiril.create_tooltip(deconv_object_psf_slider, "Adjust the PSF (Point Spread Function) size "
-                "for object deconvolution. Values from 0.1 to 10.0 are allowed.")
-        self.psf_size_var.trace_add("write", self._update_deconv_object_psf_label)
-
-        # BGE operation parameters
-        bge_frame = ttk.Frame(self.params_frame)
-        self.operation_frames['bge'] = bge_frame
-
-        # Smoothing slider for BGE
-        smoothing_frame = ttk.Frame(bge_frame)
-        smoothing_frame.pack(fill=tk.X, padx=5, pady=5)
-        smoothing_label = ttk.Label(smoothing_frame, text="Smoothing:")
-        smoothing_label.pack(side=tk.LEFT, padx=5)
-        smoothing_slider = ttk.Scale(
-            smoothing_frame,
-            from_=0.0,
-            to=1.0,
-            orient=tk.HORIZONTAL,
-            variable=self.smoothing_var,
-            length=200
-        )
-        smoothing_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.smoothing_value = ttk.Label(smoothing_frame, text="0.5")
-        self.smoothing_value.pack(side=tk.RIGHT, padx=5)
-        tksiril.create_tooltip(smoothing_slider, "Adjust the background extraction smoothing. "
-                "Higher values result in smoother background extraction.")
-        self.smoothing_var.trace_add("write", self._update_smoothing_label)
-
-        # Correction type
-        correction_frame = ttk.Frame(bge_frame)
-        correction_frame.pack(fill=tk.X, padx=5, pady=5)
-        combo_label = ttk.Label(correction_frame, text="Correction Type:")
-        combo_label.grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-
-        # Set up the correction type variable
-        self.correction_type = tk.StringVar()
-        self.correction_type.set("subtraction")  # Default value
-
-        # Create the combobox
-        self.correction_type_combo = ttk.Combobox(
-            correction_frame,
-            textvariable=self.correction_type,
-            values=["subtraction", "division"],
-            state="readonly",
-            width=15
-        )
-        self.correction_type_combo.grid(row=0, column=1, padx=5, pady=5)
-
-        # Keep background checkbox
-        keepbg_frame = ttk.Frame(bge_frame)
-        keepbg_frame.pack(fill=tk.X, padx=5, pady=2)
-        keepbg_checkbox = ttk.Checkbutton(
-            keepbg_frame,
-            text="Keep background",
-            variable=self.keep_bg_var
-        )
-        keepbg_checkbox.pack(side=tk.LEFT, padx=5)
-        tksiril.create_tooltip(keepbg_checkbox, "Save the extracted background as well")
-
-        # Advanced parameters (common for all operations)
-        advanced_frame = ttk.LabelFrame(main_frame, text="Advanced")
-        advanced_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        # Batch size
-        batch_size_frame = ttk.Frame(advanced_frame)
-        batch_size_frame.pack(fill=tk.X, padx=5, pady=2)
-        batch_size_label = ttk.Label(batch_size_frame, text="Batch Size:")
-        batch_size_label.pack(side=tk.LEFT, padx=5)
-        batch_size_entry = ttk.Entry(batch_size_frame, textvariable=self.batch_size_var, width=8)
-        batch_size_entry.pack(side=tk.RIGHT, padx=5)
-        tksiril.create_tooltip(batch_size_entry, "AI batch size. It is recommended to leave "
-                               "this at the default value")
-
-        # GPU acceleration checkbox
-        gpu_frame = ttk.Frame(advanced_frame)
-        gpu_frame.pack(fill=tk.X, padx=5, pady=2)
-        gpu_checkbox = ttk.Checkbutton(
-            gpu_frame,
-            text="Use GPU acceleration (if available)",
-            variable=self.gpu_acceleration_var
-        )
-        gpu_checkbox.pack(side=tk.LEFT, padx=5)
-        tksiril.create_tooltip(gpu_checkbox, "Controls use of GPU acceleration. Disable "
-                               "this if you encounter problems with it enabled.")
-
-        # Action buttons
-        action_frame = ttk.Frame(main_frame)
-        self.action_frame = action_frame
-        action_frame.pack(fill=tk.X, pady=10)
-
-        # Apply button that handles single image and sequence
-        apply_btn = ttk.Button(
-            action_frame,
-            text="Apply",
-            command=self._on_apply
-        )
-        apply_btn.pack(side=tk.LEFT, padx=5)
-        tksiril.create_tooltip(apply_btn, "Apply the selected operation to the loaded image or sequence.")
-
-        # Create a button that will open the model manager dialog
-        model_button = ttk.Button(
-            action_frame,
-            text="GraXpert Model Manager",
-            command=self.load_model_manager
-        )
-        model_button.pack(side=tk.LEFT, padx=5)
-        tksiril.create_tooltip(model_button, "Check and download remote GraXpert models")
-
-        # Close button
-        close_btn = ttk.Button(
-            action_frame,
-            text="Close",
-            command=self.close_dialog
-        )
-        close_btn.pack(side=tk.LEFT, padx=5)
-        tksiril.create_tooltip(close_btn, "Close the script.")
-
-        # Progress message label
-        self.progress_var = tk.StringVar(value="")
-        progress_label = ttk.Label(main_frame, textvariable=self.progress_var)
-        progress_label.pack(pady=5)
-
-    def _update_strength_label(self, *args):
-        """Update the strength value label when slider changes"""
-        self.strength_value.config(text=f"{self.strength_var.get():.2f}")
-
-    def _update_smoothing_label(self, *args):
-        """Update the smoothing value label when slider changes"""
-        self.smoothing_value.config(text=f"{self.smoothing_var.get():.2f}")
-
-    def _update_deconv_stars_strength_label(self, *args):
-        """Update the deconvolution (stars) strength value label when slider changes"""
-        self.deconv_stars_strength_value.config(text=f"{self.strength_var.get():.2f}")
-
-    def _update_deconv_stars_psf_label(self, *args):
-        """Update the deconvolution (stars) PSF size value label when slider changes"""
-        self.deconv_stars_psf_value.config(text=f"{self.psf_size_var.get():.2f}")
-
-    def _update_deconv_object_strength_label(self, *args):
-        """Update the deconvolution (object) strength value label when slider changes"""
-        self.deconv_object_strength_value.config(text=f"{self.strength_var.get():.2f}")
-
-    def _update_deconv_object_psf_label(self, *args):
-        """Update the deconvolution (object) PSF size value label when slider changes"""
-        self.deconv_object_psf_value.config(text=f"{self.psf_size_var.get():.2f}")
-
-    def _on_operation_selected(self, event):
-        """Handle operation selection change"""
-        # Get the selected display name
-        display_name = self.operation_display_var.get()
-
-        # Map back to the operation key
-        operation_keys = list(self.operations.keys())
-        operation_names = list(self.operations.values())
-        try:
-            index = operation_names.index(display_name)
-            operation = operation_keys[index]
-            self.selected_operation.set(operation)
-        except ValueError:
-            # Fallback in case of error
-            operation = self.selected_operation.get() or 'denoise'
-
-        # Update the processor based on the selected operation
-        if operation == 'denoise':
-            self.processor = DenoiserProcessing(self.siril)
-            # Load previously saved model path from configuration
-            model_path = self.processor.check_config_file()
-            self.model_path_var.set(model_path or "")
-        elif operation == 'bge':
-            self.processor = BGEProcessing(self.siril)
-            # Load previously saved model path from configuration
-            model_path = self.processor.check_config_file()
-            self.model_path_var.set(model_path or "")
-        elif operation == 'deconvolution-stars' or operation == 'deconvolution-object':
-            self.processor = DeconvolutionProcessing(self.siril)
-            # Load previously saved model path from configuration
-            model_path = self.processor.check_config_file(operation)
-            self.model_path_var.set(model_path or "")
-        # Add additional operation handlers here in future
-
-        # Update model dropdown based on operation
-        self._populate_model_dropdown()
-
-        # Show the appropriate parameter frame and hide others
-        for op, frame in self.operation_frames.items():
-            if op == operation:
-                frame.pack(fill=tk.X, padx=5, pady=5)
-            else:
-                frame.pack_forget()
-
-        # Update the window title to reflect the current operation
-        op_display_name = self.operations.get(operation, "Operation")
-        self.root.title(f"GraXpert AI {op_display_name} - Siril interface v{VERSION}")
-
-    def load_model_manager(self):
-        if self.model_manager is None:
-            self.model_manager = GraXpertModelManager(self.action_frame, self.siril, self.update_dropdowns)
-        if self.model_manager.initialized:
-            self.model_manager.show_dialog()
-        else:
-            self.model_manager = None
-
-    def update_dropdowns(self):
-        self._populate_model_dropdown()
-        self._populate_operations_dropdown()
-
-    def _populate_operations_dropdown(self):
-        """
-        Rescans available operations and updates the operations dropdown.
-        Should be called when new operations are downloaded or become available.
-        """
-        # Get the most up-to-date operations
-        self.operations = get_available_local_operations()
-
-        # Convert operations dict to display names for dropdown
-        operation_names = list(self.operations.values())
-        operation_keys = list(self.operations.keys())
-
-        # Update the dropdown with new values
-        self.op_dropdown['values'] = operation_names
-
-        # Get the current selected operation key (if any)
-        current_key = self.selected_operation.get()
-
-        if current_key and current_key in self.operations:
-            # If current selection is still available, keep it selected
-            display_name = self.operations[current_key]
-            self.operation_display_var.set(display_name)
-        elif operation_keys:
-            # Otherwise select the first available operation
-            first_key = operation_keys[0]
-            first_display_name = operation_names[0]
-
-            self.selected_operation.set(first_key)
-            self.operation_display_var.set(first_display_name)
-
-            # Since selection changed, update processor and UI
-            self._on_operation_selected(None)
-        else:
-            # If no operations are available
-            self.op_dropdown['values'] = ["No operations available"]
-            self.operation_display_var.set("No operations available")
-            self.selected_operation.set("")
-
-            # Hide all parameter frames
-            for frame in self.operation_frames.values():
-                frame.pack_forget()
-
-        # Update window title
-        current_key = self.selected_operation.get()
-        if current_key and current_key in self.operations:
-            op_display_name = self.operations[current_key]
-            self.root.title(f"GraXpert AI {op_display_name} - Siril interface v{VERSION}")
-        else:
-            self.root.title(f"GraXpert AI - Siril interface v{VERSION}")
-
-    def _populate_model_dropdown(self):
-        """Populate the model dropdown with available models for the current operation"""
-        operation = self.selected_operation.get()
-
-        # Get model directory name based on operation
-        model_dir = None
-        if operation == 'denoise':
-            model_dir = "denoise-ai-models"
-        elif operation == 'bge':
-            model_dir = "bge-ai-models"
-        elif operation == 'deconvolution-stars':
-            model_dir = "deconvolution-stars-ai-models"
-        elif operation == 'deconvolution-object':
-            model_dir = "deconvolution-object-ai-models"
-        else:
-            # Default to denoise models if operation not recognized
-            model_dir = "denoise-ai-models"
-
-        # Dictionary to store model name -> full path mapping
-        model_paths = get_available_local_models(model_dir)
-
-        # Update the dropdown values
-        if model_paths:
-            # Sort model names alphabetically
-            model_names = sorted(model_paths.keys())
-            self.model_dropdown['values'] = model_names
-
-            # Store the full path mapping for when selection changes
-            self.model_path_mapping = model_paths
-
-            # Get the previously selected model path from model_path_var
-            current_path = self.model_path_var.get()
-
-            # Find the model name associated with the current path
-            selected_model = None
-            for name, path in model_paths.items():
-                if path == current_path:
-                    selected_model = name
-                    break
-
-            if selected_model and selected_model in model_names:
-                # Set the dropdown to the previously selected model
-                self.model_name_var.set(selected_model)
-            else:
-                # If no match found or no previous selection, select the first model
-                self.model_dropdown.current(0)
-                selected_model = model_names[0]
-                self.model_name_var.set(selected_model)
-                # Set the full path in the hidden variable
-                self.model_path_var.set(model_paths[selected_model])
-        else:
-            self.model_dropdown['values'] = ["No models found"]
-            self.model_dropdown.current(0)
-            self.model_name_var.set("No models found")
-            self.model_path_var.set("")
-
-        # Bind the selection event to update the model_path_var
-        self.model_dropdown.bind("<<ComboboxSelected>>", self._on_model_selected)
-
-    def _on_model_selected(self, event):
-        """Update the model_path_var when a model is selected from dropdown"""
-        selected_model = self.model_dropdown.get()
-        if selected_model in self.model_path_mapping:
-            # Set the full path in the hidden variable
-            self.model_path_var.set(self.model_path_mapping[selected_model])
-            # The display shows only the model name, which is already handled by
-            # self.model_name_var
-
-            # Save config with updated model path
-            self.processor.save_config_file(self.model_path_var.get())
-            # Reset the cached image to force recalculation
-            self.processor.reset_cache()
-
-    def _on_apply(self):
-        """
-        Handle the 'Apply' button click event.
-        This method starts the appropriate processing thread based on the current state and
-        uses the processor class methods as thread targets.
-        """
-        model_path = self.model_path_var.get()
-        operation = self.selected_operation.get()
-
-        # Get processing parameters from UI
-        batch_size = int(self.batch_size_var.get())
-        gpu_acceleration = self.gpu_acceleration_var.get()
-
-        # Validate model path if needed for new processing
-        if not model_path or not os.path.isfile(model_path):
-            messagebox.showerror("Error", "Please select a valid ONNX model file.")
-            return
-
-        if self.siril.is_image_loaded():
-            if operation == "bge":
-                correction_type = self.correction_type.get()
-                smoothing = float(self.smoothing_var.get())
-
-                # Cache the original image
-                self.processor.cached_original_image = self.siril.get_image_pixeldata()
-
-                # Reshape mono images to 3D with a channels size of 1
-                if self.processor.cached_original_image.ndim == 2:
-                    self.processor.cached_original_image = self.processor.cached_original_image[np.newaxis, ...]
-
-                filename = None
-                header = None
-                keep_bg = self.keep_bg_var.get()
-                if keep_bg:
-                    filename = self.siril.get_image_filename()
-                    header = self.siril.get_image_fits_header()
-
-                # Start image processing thread
-                threading.Thread(
-                    target=self.processor.process_image,
-                    args=(
-                        model_path,
-                        correction_type,
-                        smoothing,
-                        keep_bg,
-                        filename,
-                        header,
-                        gpu_acceleration,
-                        self._update_progress
-                    ),
-                    daemon=True
-                ).start()
-
-            elif operation == "denoise":
-                strength = float(self.strength_var.get())
-                if self.processor.cached_processed_image is None:
-                    # Cache the original image if this is first-time processing
-                    self.processor.cached_original_image = \
-                                self.siril.get_image_pixeldata()
-
-                    # Reshape mono images to 3D with a channels size of 1
-                    if self.processor.cached_original_image.ndim == 2:
-                        self.processor.cached_original_image = self.processor.cached_original_image[np.newaxis, ...]
-
-                    # Start image processing thread using processor's method
-                    threading.Thread(
-                        target=self.processor.process_image,
-                        args=(model_path, strength, batch_size,
-                            gpu_acceleration, self._update_progress),
-                        daemon=True
-                    ).start()
-                else:
-                    # Apply operation-specific blend
-                    threading.Thread(
-                        target=lambda: self.processor.apply_blend(strength),
-                        daemon=True
-                    ).start()
-            elif operation == "deconvolution-stars":
-                strength = float(self.strength_var.get())
-                psf_size = float(self.psf_size_var.get())
-
-                if self.processor.cached_processed_image is None:
-                    # Cache the original image if this is first-time processing
-                    self.processor.cached_original_image = \
-                                self.siril.get_image_pixeldata()
-
-                # Reshape mono images to 3D with a channels size of 1
-                if self.processor.cached_original_image.ndim == 2:
-                    self.processor.cached_original_image = self.processor.cached_original_image[np.newaxis, ...]
-
-                self._update_progress(f"Processing image with stars deconvolution (PSF size: {psf_size:.2f}, strength: {strength:.2f})")
-                threading.Thread(
-                    target=self.processor.process_image,
-                    args=(model_path, strength, psf_size, batch_size,
-                          gpu_acceleration, self._update_progress),
-                    daemon=True
-                ).start()
-            elif operation == "deconvolution-object":
-                strength = float(self.strength_var.get())
-                psf_size = float(self.psf_size_var.get())
-
-                if self.processor.cached_processed_image is None:
-                    # Cache the original image if this is first-time processing
-                    self.processor.cached_original_image = \
-                                self.siril.get_image_pixeldata()
-
-                # Reshape mono images to 3D with a channels size of 1
-                if self.processor.cached_original_image.ndim == 2:
-                    self.processor.cached_original_image = self.processor.cached_original_image[np.newaxis, ...]
-
-                self._update_progress(f"Processing image with object deconvolution (PSF size: {psf_size:.2f}, strength: {strength:.2f})")
-                threading.Thread(
-                    target=self.processor.process_image,
-                    args=(model_path, strength, psf_size, batch_size,
-                          gpu_acceleration, self._update_progress),
-                    daemon=True
-                ).start()
-        elif self.siril.is_sequence_loaded():
-            if operation == "bge":
-                correction_type = self.correction_type.get()
-                smoothing = float(self.smoothing_var.get())
-                # Get current sequence name
-                sequence_name = self.siril.get_seq().seqname
-                keep_bg = self.keep_bg_var.get()
-
-                # Start sequence processing thread using processor's method
-                threading.Thread(
-                    target=self.processor.process_sequence,
-                    args=(sequence_name, model_path, correction_type, smoothing,
-                        keep_bg, gpu_acceleration, self._update_progress),
-                    daemon=True
-                ).start()
-            elif operation == "denoise":
-                strength = float(self.strength_var.get())
-                # Get current sequence name
-                sequence_name = self.siril.get_seq().seqname
-
-                # Start sequence processing thread using processor's method
-                threading.Thread(
-                    target=self.processor.process_sequence,
-                    args=(sequence_name, model_path, strength, batch_size,
-                        gpu_acceleration, self._update_progress),
-                    daemon=True
-                ).start()
-            elif operation == "deconvolution-stars":
-                strength = float(self.strength_var.get())
-                psf_size = float(self.psf_size_var.get())
-                sequence_name = self.siril.get_seq().seqname
-
-                # Placeholder for deconvolution-stars sequence processing
-                self._update_progress(f"Processing {sequence_name} with stars deconvolution (PSF size: {psf_size:.2f}, strength: {strength:.2f})")
-                threading.Thread(
-                    target=self.processor.process_sequence,
-                    args=(sequence_name, model_path, strength, psf_size, batch_size,
-                        gpu_acceleration, self._update_progress),
-                    daemon=True
-                ).start()
-
-            elif operation == "deconvolution-object":
-                strength = float(self.strength_var.get())
-                psf_size = float(self.psf_size_var.get())
-                sequence_name = self.siril.get_seq().seqname
-
-                self._update_progress(f"Processing {sequence_name} with object deconvolution (PSF size: {psf_size:.2f}, strength: {strength:.2f})")
-                threading.Thread(
-                    target=self.processor.process_sequence,
-                    args=(sequence_name, model_path, strength, psf_size, batch_size,
-                        gpu_acceleration, self._update_progress),
-                    daemon=True
-                ).start()
-
-            else:
-                print("Operation not handled")
-
-        else:
-            messagebox.showerror("Error", "No sequence or image is loaded.")
-
-    def _update_progress(self, message, progress=0):
-        self.progress_var.set(message)
-        self.siril.update_progress(message, progress)
-
-    def close_dialog(self):
-        """ Close the dialog """
-        self.siril.disconnect()
-        self.root.quit()
-        self.root.destroy()
-
 class DenoiserCLI:
     """CLI interface for GraXpert AI Denoise."""
 
@@ -3666,14 +3687,14 @@ def main():
                 # No tool specified - show available tools and default to denoiser
                 print("No tool specified. Use -denoise, -bge, -deconv-stellar or -deconv-obj to select a tool.")
         else:
-            # GUI mode remains unchanged
-            root = ThemedTk()
-            GUIInterface(root, siril)
-            root.mainloop()
+            # GUI mode - use PyQt6
+            app = QApplication(sys.argv)
+            window = GUIInterface(siril)
+            window.show()
+            sys.exit(app.exec())
     except Exception as e:
         print(f"Error initializing application: {str(e)}")
         sys.exit(1)
 
 if __name__ == "__main__":
     main()
-
