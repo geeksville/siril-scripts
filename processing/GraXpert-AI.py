@@ -52,6 +52,7 @@ Models licensed as CC-BY-NC-SA-4.0
 #        situations where system NVIDIA libraries can't be found
 # 2.0.0  Update GUI to base it on PyQt6
 # 2.0.1  Change import order to avoid DLL load errors on Windows
+# 2.0.2  Fix issue with the deconvolution strength slider not working
 
 import os
 import re
@@ -99,7 +100,7 @@ import numpy as np
 from astropy.io import fits
 from appdirs import user_data_dir
 
-VERSION = "2.0.1"
+VERSION = "2.0.2"
 DENOISE_CONFIG_FILENAME = "graxpert_denoise_model.conf"
 BGE_CONFIG_FILENAME = "graxpert_bge_model.conf"
 DECONVOLVE_STARS_CONFIG_FILENAME = "graxpert_deconv_stars_model.conf"
@@ -707,11 +708,19 @@ class GUIInterface(QMainWindow):
         value = sender.value() / 100.0
         self.strength_value = value
 
-        # Update the corresponding spinbox
-        if hasattr(self, 'strength_spin'):
+        operation = self.selected_operation
+        if operation == 'denoise':
             self.strength_spin.blockSignals(True)
             self.strength_spin.setValue(value)
             self.strength_spin.blockSignals(False)
+        elif operation == 'deconvolution-stars':
+            self.deconv_stars_strength_spin.blockSignals(True)
+            self.deconv_stars_strength_spin.setValue(value)
+            self.deconv_stars_strength_spin.blockSignals(False)
+        elif operation == 'deconvolution-object':
+            self.deconv_object_strength_spin.blockSignals(True)
+            self.deconv_object_strength_spin.setValue(value)
+            self.deconv_object_strength_spin.blockSignals(False)
 
     def _update_strength_from_spin(self):
         """Update strength slider when spinbox changes"""
@@ -719,11 +728,20 @@ class GUIInterface(QMainWindow):
         value = sender.value()
         self.strength_value = value
 
-        # Update the corresponding slider
-        if hasattr(self, 'strength_slider'):
+        operation = self.selected_operation
+        if operation == 'denoise':
             self.strength_slider.blockSignals(True)
             self.strength_slider.setValue(int(value * 100))
             self.strength_slider.blockSignals(False)
+        elif operation == 'deconvolution-stars':
+            self.deconv_stars_strength_slider.blockSignals(True)
+            self.deconv_stars_strength_slider.setValue(int(value * 100))
+            self.deconv_stars_strength_slider.blockSignals(False)
+        elif operation == 'deconvolution-object':
+            self.deconv_object_strength_slider.blockSignals(True)
+            self.deconv_object_strength_slider.setValue(int(value * 100))
+            self.deconv_object_strength_slider.blockSignals(False)
+
 
     def _update_smoothing_from_slider(self):
         """Update smoothing spinbox when slider changes"""
