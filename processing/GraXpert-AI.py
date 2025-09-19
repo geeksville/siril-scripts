@@ -386,12 +386,6 @@ class GUIInterface(QMainWindow):
         self.correction_type_value = "subtraction"
         self.model_path_mapping = {}
 
-        self.siril.log("This script is under ongoing development. Please report any bugs to "
-            "https://gitlab.com/free-astro/siril-scripts. We are also especially keen "
-            "for confirmation of success / failure from Linux users with AMD Radeon "
-            "or Intel ARC GPUs as we do not have these hardware / OS combinations among "
-            "the development team", color=s.LogColor.BLUE)
-
         # Create widgets
         self.operation_widget_map = {}  # New mapping for QStackedWidget
         self.create_widgets()
