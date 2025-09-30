@@ -6,8 +6,12 @@ Siril Image Window - A pseudo-MDI GUI script for storing and swapping images wit
 # Blink Comparator for Siril
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 1.0.0
-#
+# Version 1.0.2
+# 1.0.0  Initial release
+# 1.0.1  Create new image with correct filename when sending image to Siril or swapping
+#        (this is a bit ugly but the proper fix to syncing filenames requires a code change)
+# 1.0.2  Implement the proper fix (with needs_module_version checks so that the correct
+#        version of the fix is used) for synchronizing filenames
 
 import io
 import sys
@@ -596,7 +600,7 @@ class SirilImageHolder(QMainWindow):
             # Store the data and metadata
             self.stored_image = img
             self.stored_metadata = img.header
-            self.stored_filename = filename.split('/')[-1]  # Get just the filename
+            self.stored_filename = filename
             self.linked_params = None  # Reset cached MTF params
             self.unlinked_params = None  # Reset cached MTF params
 
@@ -623,6 +627,9 @@ class SirilImageHolder(QMainWindow):
     def on_linked_changed(self, state):
         """Handle changes to the linked checkbox"""
         self.link = state == Qt.CheckState.Checked.value
+        # TODO: This version check can be removed after RC1
+        if self.sync_mode == "Follow Script" and s.needs_module_version(">=0.8.1"):
+            self.siril.set_siril_stf_linked(self.link)
         if "Autostretch" in self.display_mode:
             self.update_image_display(False)
 
@@ -1097,9 +1104,14 @@ class SirilImageHolder(QMainWindow):
                     except:
                         siril_filename = "Siril Image"
 
+                if s.needs_module_version("<=0.8.0"): # TODO: Old code path, can be removed after 1.4.0-RC1
+                    self.siril.cmd("new", "1", "1", "1", self.stored_filename)
+
                 # Send stored image to Siril (requires image lock)
                 with self.siril.image_lock():
                     self.siril.set_image_pixeldata(self.stored_image.data)
+                    if s.needs_module_version(">=0.8.1"): # TODO: check can be removed after 1.4.0-RC1
+                        self.siril.set_image_filename(self.stored_filename)
                     if self.stored_metadata:
                         self.siril.set_image_metadata_from_header_string(self.stored_metadata)
                     # Set ICC profile if available
@@ -1161,27 +1173,26 @@ class SirilImageHolder(QMainWindow):
             with self.siril_mutex:
                 # Check if Siril has an image
                 if self.siril.is_image_loaded():
-                    current_siril_img = self.siril.get_image()
+                    # Show confirmation dialog
+                    reply = QMessageBox.question(
+                        self,
+                        'Confirm Copy',
+                        'Siril already has an image open. Are you sure you want to replace it?',
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No
+                    )
 
-                    if current_siril_img is not None:
-                        # Show confirmation dialog
-                        reply = QMessageBox.question(
-                            self,
-                            'Confirm Copy',
-                            'Siril already has an image open. Are you sure you want to replace it?',
-                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                            QMessageBox.StandardButton.No
-                        )
-
-                        if reply != QMessageBox.StandardButton.Yes:
+                    if reply != QMessageBox.StandardButton.Yes:
                             return
-                else:
-                    # No image is open. We need to create a new one to copy into
-                    self.siril.cmd("new", "1", "1", "1", "new empty image")
+
+                if s.needs_module_version("<=0.8.0"): # TODO: Old code path, can be removed after 1.4.0-RC1
+                    self.siril.cmd("new", "1", "1", "1", self.stored_filename)
 
                 # Send image to Siril (requires image lock)
                 with self.siril.image_lock():
                     self.siril.set_image_pixeldata(self.stored_image.data)
+                    if s.needs_module_version(">= 0.8.1"): # TODO: check can be removed after 1.4.0-RC1
+                        self.siril.set_image_filename(self.stored_filename)
                     if self.stored_metadata:
                         self.siril.set_image_metadata_from_header_string(self.stored_metadata)
                     # Set ICC profile if available
@@ -1220,8 +1231,6 @@ class SirilImageHolder(QMainWindow):
                     current_index = self.display_combo.currentIndex()
                     stf_type = STFType(current_index)
                     self.siril.set_siril_stf(stf_type)
-                    # Next line commented out till RC1 - I forgot to add the setter...
-                    # self.siril.set_siril_stf_linked(self.link)
             except Exception as e:
                 print(f"Failed to sync STF to Siril: {str(e)}")
 
