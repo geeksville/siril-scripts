@@ -61,9 +61,10 @@
 # 2.0.3 - Minor fix:
 #         Fixed file extension handling to support various FITS formats (e.g., .fit, .fit.fz).
 #         Enhanced logging for the final image composition to improve user feedback.
+# 2.0.4 - Missing ensure installed numpy and opencv-python
 #
 
-VERSION = "2.0.3"
+VERSION = "2.0.4"
 CONFIG_FILENAME = "Hubble-Palette-from-Dual-Band-OSC.conf"
 
 # Core module imports
@@ -86,7 +87,7 @@ try:
     # Import Siril GUI related components
     from sirilpy import SirilError
 
-    s.ensure_installed("PyQt6", "astropy")
+    s.ensure_installed("PyQt6", "numpy", "astropy", "opencv-python")
 
     # --- PyQt6 Imports ---
     from PyQt6.QtWidgets import (
