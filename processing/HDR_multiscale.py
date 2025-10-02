@@ -1,4 +1,16 @@
 """
+**HDR Multiscale - Wavelet-Based Dynamic Range Compression**
+
+This script compresses high dynamic range in astrophotography images using à trous 
+wavelet decomposition with luminance-based masking. It works in Lab color space to 
+preserve color fidelity while compressing detail scales differently based on local 
+luminance.
+
+**IMPORTANT: This tool requires stretched, non-linear images as input.**
+The algorithm expects pixel values in display range [0,1]. Do NOT use on linear 
+(unstretched) data - apply your stretch/histogram transformation first, then use 
+this tool to compress bright areas and reveal hidden detail.
+
 HDR Multiscale for Siril
 from Franklin Marek SAS code (2025)
 Adapted for Siril by Cyril Richard
@@ -9,6 +21,10 @@ SPDX-License-Identifier: GPL-3.0-or-later
 HDR compression using à trous wavelet decomposition
 with luminance masking and Lab color space processing
 """
+
+# Version History
+# 1.0.0  Initial release
+# 1.0.1  Adding information text
 
 import sirilpy as s
 s.ensure_installed('PyQt6')
@@ -26,7 +42,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt6.QtCore import Qt, QObject, pyqtSignal, QThread
 from PyQt6.QtGui import QFont, QImage, QPixmap
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 if not s.check_module_version('>=0.6.42'):
     print("Error: requires sirilpy module >= 0.6.42")
@@ -405,11 +421,27 @@ class WaveScaleHDRDialog(QMainWindow):
         bottom_layout.addWidget(self.btn_close)
         layout.addLayout(bottom_layout)
         
+        # Information text
+        info_label = QLabel(
+            "<b>IMPORTANT:</b> This tool requires stretched, non-linear images.<br>"
+            "Apply your histogram stretch <b>FIRST</b>.<br><br>"
+            "<b>Usage:</b><br>"
+            "1. Set the number of scales (detail levels: more scales = finer details)<br>"
+            "2. Click <b>Preview</b> to process<br>"
+            "3. Adjust Compression and Mask Gamma as needed<br>"
+            "4. Click <b>Preview</b> again to update<br>"
+            "5. Toggle <b>Show Original/Show Preview</b> to compare<br>"
+            "6. Click <b>Apply to Siril</b> when satisfied"
+        )
+        info_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        layout.addStretch()
+        
         footer_label = QLabel("Written by Franklin Marek\nSiril port by Cyril Richard\nwww.setiastro.com")
         footer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(footer_label)
-        
-        layout.addStretch()
         
         return left_widget
     
