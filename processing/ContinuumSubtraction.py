@@ -15,6 +15,7 @@ user-selected region using AAD (Average Absolute Deviation).
 # 1.0.1 Bug fixes
 # 1.0.2 Improve file selection on Linux (use tkfilebrowser)
 # 2.0.0 Conversion of GUI to PyQt6
+# 2.0.1 Linear fit for enhanced continuum to preserve median
 
 import os
 import sys
@@ -38,7 +39,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 
-VERSION = "2.0.0"
+VERSION = "2.0.1"
 
 def aad(data):
     mean = np.mean(data)
@@ -126,6 +127,32 @@ def perform_continuum_subtraction(narrowband_image,
         QTimer.singleShot(0, show_plot)
 
     return optimal_scale
+
+
+def linear_fit_to_preserve_median(enhanced, original):
+    """
+    Apply linear transformation to enhanced image to match the median
+    of the original continuum image.
+
+    Returns: slope, intercept for transformation: result = slope * enhanced + intercept
+    """
+    # Flatten arrays for fitting
+    enhanced_flat = enhanced.flatten()
+    original_flat = original.flatten()
+
+    # Perform linear regression: original = slope * enhanced + intercept
+    # Using least squares: minimize sum((original - (a*enhanced + b))^2)
+    n = len(enhanced_flat)
+    sum_x = np.sum(enhanced_flat)
+    sum_y = np.sum(original_flat)
+    sum_xx = np.sum(enhanced_flat * enhanced_flat)
+    sum_xy = np.sum(enhanced_flat * original_flat)
+
+    # Calculate slope and intercept
+    slope = (n * sum_xy - sum_x * sum_y) / (n * sum_xx - sum_x * sum_x)
+    intercept = (sum_y - slope * sum_x) / n
+
+    return slope, intercept
 
 
 class ContinuumSubtractionInterface(QMainWindow):
@@ -287,9 +314,24 @@ class ContinuumSubtractionInterface(QMainWindow):
                     self.siril.log("Invalid enhancement factor, using default 1.0", s.LogColor.SALMON)
                 subtracted = narrowband_data - (continuum_data - c_median) * scale_factor
                 subtracted = np.clip(subtracted, 0, 1)
-                result = continuum_data + subtracted * enhance_factor
+                enhanced = continuum_data + subtracted * enhance_factor
+                enhanced = np.clip(enhanced, 0, 1)
+
+                # Apply linear fit to preserve median of original continuum
+                slope, intercept = linear_fit_to_preserve_median(enhanced, continuum_data)
+                result = slope * enhanced + intercept
                 result = np.clip(result, 0, 1)
-                message = f"Enhanced continuum created with subtraction factor {scale_factor:.4f} and enhancement {enhance_factor:.2f}"
+
+                # Verify median preservation
+                original_median = np.median(continuum_data)
+                result_median = np.median(result)
+
+                self.siril.log(f"Enhanced continuum created with subtraction factor {scale_factor:.4f} "
+                          f"and enhancement {enhance_factor:.2f}. "
+                          f"Linear fit applied (slope={slope:.4f}, intercept={intercept:.4f}). "
+                          f"Original median: {original_median:.6f}, Result median: {result_median:.6f}",
+                          s.LogColor.GREEN)
+                message = "Enhanced continuum image complete."
 
             ext = self.siril.get_siril_config("core", "extension")
             self.siril.cmd("new", "1", "1", "1", f"result{ext}")
@@ -315,4 +357,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
