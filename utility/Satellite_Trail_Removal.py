@@ -79,9 +79,11 @@
 #           much more robust and less prone to being confused by dense star fields.
 # 2.0.0 - Version PyQt6
 # 2.0.1 - Added Icon App
+# 2.0.2 - Fixed CFA pattern detection
+# 2.0.3 - Improved UI layout for Mode and Reference file display
 #
 
-VERSION = "2.0.1"
+VERSION = "2.0.3"
 
 # --- Core Imports ---
 import sys
@@ -111,7 +113,8 @@ try:
         QApplication, QWidget, QMainWindow, QDialog, QMessageBox, QFileDialog, QVBoxLayout, QHBoxLayout,
         QLabel, QPushButton, QStyle, QSizePolicy, QSlider, QListWidget, QRadioButton, QButtonGroup,
         QCheckBox, QTextEdit, QGraphicsView, QGraphicsScene, QGraphicsLineItem, QGraphicsPixmapItem,
-        QGraphicsEllipseItem, QSplitter, QScrollArea, QGroupBox, QSpinBox, QDoubleSpinBox, QGridLayout
+        QGraphicsEllipseItem, QSplitter, QScrollArea, QGroupBox, QSpinBox, QDoubleSpinBox, QGridLayout,
+        QLineEdit, QFrame
     )
     from PyQt6.QtGui import (
         QPixmap, QIcon, QImage, QPainterPath, QAction, QPainter, QBrush, QPen, QColor, QFont, QCloseEvent,
@@ -510,7 +513,7 @@ class IconTextButton(QPushButton):
     def __init__(self, text, icon=None, parent=None):
         super().__init__(parent)
         
-        # NEW AND CRITICAL FIX: Set the size policy to match a standard button.
+        # Set the size policy to match a standard button.
         # This prevents the button from expanding greedily and compressing others.
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
@@ -607,6 +610,7 @@ class TrailRemovalAPP(QWidget):
             seq = self.siril.get_seq()
             self.current_seq_name = seq.seqname
             self.current_frame_index = seq.current
+
             self.siril.log(
                 f"Load frame: {self.current_frame_index + 1}/{seq.number} from sequence: '{self.current_seq_name}' ",
                 s.LogColor.BLUE
@@ -627,6 +631,12 @@ class TrailRemovalAPP(QWidget):
         self.create_widgets()
         self.center_window()
         self.show_loading_message()
+
+        if seq_loaded:
+            # --- Ora posso aggiornare le Info Etichetta ---
+            self.current_frame_label.setText(f"Sequence Mode - Current Frame {self.current_frame_index + 1} / {seq.number}")
+        elif image_loaded:
+            self.current_frame_label.setText("Single Image Mode")
 
         # This does not block __init__ and allows the window to appear immediately.
         QTimer.singleShot(500, self._load_image_data_and_preview)
@@ -693,13 +703,28 @@ class TrailRemovalAPP(QWidget):
         left_panel_layout = QVBoxLayout(left_panel_container)
         left_panel_layout.setContentsMargins(5, 5, 5, 5) # Similar to padding
 
-        # To make the panel scrollable, QScrollArea
+        # # To make the panel scrollable, QScrollArea
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(left_panel_container)
 
-        # Add the scrollable area to the splitter
         main_splitter.addWidget(scroll_area)
+
+        self.mode_layout = QGridLayout()
+        self.mode_layout.setContentsMargins(0, 0, 0, 5) # Manteniamo il margine inferiore
+
+        label_mode = QLabel("Mode : ")
+        self.mode_layout.addWidget(label_mode, 0, 0) # Riga 0, Colonna 0
+
+        self.current_frame_label = QLabel("Single Image Mode")
+        self.current_frame_label.setObjectName("current_frame_label")
+        self.current_frame_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        # Aggiunge l'etichetta del frame alla stessa riga (0), colonna 1
+        self.mode_layout.addWidget(self.current_frame_label, 0, 1, Qt.AlignmentFlag.AlignLeft)
+        self.mode_layout.setColumnStretch(2, 1)  # Colonna 2 prende tutto lo spazio rimanente
+
+        # Aggiungi il layout (invece del groupbox) direttamente al pannello sinistro
+        left_panel_layout.addLayout(self.mode_layout)
 
         # --- Trail Management ---
         # QGroupBox to group the controls
@@ -875,6 +900,17 @@ class TrailRemovalAPP(QWidget):
         fill_btn_layout.addWidget(ref_button, 1, 0)
         fill_btn_layout.addWidget(apply_ref_button, 1, 1)
         action_layout.addLayout(fill_btn_layout)
+
+        info_Reference_layout = QGridLayout()
+        info_Reference_layout.addWidget(QLabel("Reference File:"), 1, 0)
+        self.ref_file_label = QLineEdit("None")
+        self.ref_file_label.setReadOnly(True)
+        self.ref_file_label.setToolTip("No reference file selected.")
+        self.ref_file_label.setFrame(False)
+        self.ref_file_label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        info_Reference_layout.addWidget(self.ref_file_label, 1, 1)
+        
+        action_layout.addLayout(info_Reference_layout)
         
         left_panel_layout.addWidget(action_group)
 
@@ -1066,13 +1102,15 @@ class TrailRemovalAPP(QWidget):
         # --- Detection Section ---
         if detection:
             if data.ndim == 3 and data.shape[2] == 3:   # Color image (RGB)
+                self.siril.log("RGB IMAGE for Detection Section", s.LogColor.RED)
+
                 stretched_channels = []
                 for i in range(3):  # Iterate over R, G, B channels
                     channel = data[..., i]
                     median = self.image_stats['median'][i]
                     sigma = self.image_stats['sigma'][i]
-                    black_point = median + 2.0 * sigma
-                    white_point = median + 2.5 * sigma
+                    black_point = median + 1.0 * sigma  # Set black point above median to suppress background
+                    white_point = median + 10.0 * sigma
                     channel = np.clip(channel, black_point, white_point)
                     median_filtered = cv2.medianBlur(channel, 5)
                     stretched_channel = cv2.normalize(median_filtered, None, 0, 255, cv2.NORM_MINMAX)
@@ -1084,11 +1122,13 @@ class TrailRemovalAPP(QWidget):
                 stretched_8bit = cv2.cvtColor(color_image, cv2.COLOR_RGB2GRAY)
                 
             else:   # Monochrome image
+                self.siril.log("MONO IMAGE for Detection Section", s.LogColor.RED)
+
                 # Apply stretch to monochrome image
                 median = self.image_stats['median']
                 sigma = self.image_stats['sigma']
-                black_point = median + 0.5 * sigma
-                white_point = median + 2.5 * sigma
+                black_point = median - 0.5 * sigma
+                white_point = median + 5.0 * sigma
                 data = np.clip(data, black_point, white_point)
                 median_filtered = cv2.medianBlur(data, 5)
                 stretched_8bit = cv2.normalize(median_filtered, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
@@ -1108,18 +1148,24 @@ class TrailRemovalAPP(QWidget):
                     median = self.image_stats['median'][i] if stats_are_per_channel else self.image_stats['median']
                     sigma = self.image_stats['sigma'][i] if stats_are_per_channel else self.image_stats['sigma']
 
-                    # Defines the SPECIFIC stretch points for this channel
-                    # Black point: slightly below the median for a dark but unclipped sky background
+                    # Applica lo stretch (identico a quello MONO, ma per canale)
+                    # Imposta il nero sotto la mediana, il fondo cielo (che è a median) non sarà nero (0), ma un grigio scuro.
+                    # Questo è fondamentale per vedere il segnale debole che emerge dal rumore.
                     black_point = median - 1.5 * sigma
-                    # White point: High enough to reveal faint details,
-                    # but not so harsh as to completely burn out the stars. A value between 5 and 10 sigma is a good compromise.
+
+                    # Questo crea uno stretch molto più "dolce".
+                    # Mappa la gamma da (median - 2.5*s) a (median + 8.0*s) sull'intero display 0-255.
+                    # Questo dà contrasto e dettaglio alle strutture deboli (la traccia) senza appiattirle a bianco puro.
                     white_point = median + 8.0 * sigma
 
                     # Apply the stretch to a single channel
                     # "Clipping" the values to isolate the range of interest
                     channel = np.clip(channel, black_point, white_point)
+                    
+                    median_filtered = cv2.medianBlur(channel, 5)
+
                     # Normalizes the channel to use the entire 0-255 range
-                    stretched_channel = cv2.normalize(channel, None, 0, 255, cv2.NORM_MINMAX)
+                    stretched_channel = cv2.normalize(median_filtered, None, 0, 255, cv2.NORM_MINMAX)
                     stretched_channels.append(stretched_channel)
 
                 stretched_8bit = cv2.merge(stretched_channels).astype(np.uint8)
@@ -1130,17 +1176,18 @@ class TrailRemovalAPP(QWidget):
                 median = self.image_stats['median']
                 sigma = self.image_stats['sigma']
                 black_point = median - 1.5 * sigma
-                white_point = median + 4.0 * sigma
+                white_point = median + 5.0 * sigma
                 data = np.clip(data, black_point, white_point)
-                stretched_8bit = cv2.normalize(data, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+                median_filtered = cv2.medianBlur(data, 5)
+                stretched_8bit = cv2.normalize(median_filtered, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
             
             return stretched_8bit
 
     def _create_visual_preview(self):
         """
         Generates a high-quality 8-bit preview image. Normalizes input data format
-        and, if the source is a CFA image, performs on-the-fly demosaicing
-        and white balancing for correct visualization.
+        and, if the source is a CFA image, performs on-the-fly demosaicing,
+        white balancing, AND a custom stretch for correct visualization.
         """
         if self.full_image_data.ndim == 3 and self.full_image_data.shape[0] in [1, 3]:
             if self.full_image_data.shape[0] == 1:
@@ -1154,10 +1201,26 @@ class TrailRemovalAPP(QWidget):
         # Now let's check the image shape *after* normalization
         if image_for_stretch.ndim == 2:
             cfa_pattern = None
+            header = None
             try:
-                header = self.siril.get_image_fits_header(return_as='dict')
+                self.siril.log(f"Reading header from header FITS", s.LogColor.BLUE)
+                if self.current_seq_name is not None:
+                    # We are in sequence mode
+                    header = self.siril.get_seq_frame_header(self.current_frame_index, return_as='dict')
+                else:
+                    # We are in single image mode
+                    header = self.siril.get_image_fits_header(return_as='dict')
+
                 if header:
-                    cfa_pattern = header.get('BAYERPAT') or header.get('CFAIMAG')
+                    # 1. Ottieni il valore grezzo (potrebbe essere 'RGGB ' o None)
+                    cfa_pattern_raw = header.get('BAYERPAT') or header.get('CFAIMAG')
+
+                    # 2. Controlla SE hai ottenuto un valore prima di pulirlo
+                    if cfa_pattern_raw:
+                        cfa_pattern = cfa_pattern_raw.strip() # Ora è sicuro chiamare .strip()
+                    else:
+                        cfa_pattern = None # Era None e rimane None
+
             except (s.SirilError, s.NoImageError) as e:
                 # If we can't read the header, we treat it as mono
                 self.siril.log(f"Could not retrieve FITS header: {e}", s.LogColor.RED)
@@ -1170,6 +1233,7 @@ class TrailRemovalAPP(QWidget):
                 "BGGR": cv2.COLOR_BAYER_BG2RGB
             }
             
+            # --- CASO 1: Immagine CFA (da 2D a 3D) ---
             # If we found a valid CFA pattern, demosaice
             if cfa_pattern and cfa_pattern.upper() in bayer_patterns:
                 self.siril.log(f"CFA image detected ({cfa_pattern}). Demosaicing for preview.", s.LogColor.GREEN)
@@ -1179,11 +1243,8 @@ class TrailRemovalAPP(QWidget):
                 
                 # Convert the data to 16-bit if it is a float for the demosaicing function
                 if np.issubdtype(data_to_preview.dtype, np.floating):
-                    if data_to_preview.max() <= 1.0: # Assumes float data is normalized 0-1
-                        max_val = np.iinfo(np.uint16).max
-                        data_to_preview = (data_to_preview * max_val).astype(np.uint16)
-                    else: # If float is already in ADU range
-                        data_to_preview = data_to_preview.astype(np.uint16)
+                    self.siril.log("Converting float32 data to uint16 (linear scaling)...", s.LogColor.BLUE)
+                    data_to_preview = cv2.normalize(data_to_preview, None, 0, 65535, cv2.NORM_MINMAX, dtype=cv2.CV_16U)
 
                 conversion_code = bayer_patterns[cfa_pattern.upper()]
                 # Run demosaicing to get an RGB image
@@ -1194,7 +1255,6 @@ class TrailRemovalAPP(QWidget):
                 # --- White Balance for Preview ---
                 # We work on a float copy to apply scaling factors
                 demosaiced_float = demosaiced_rgb.astype(np.float32)
-                # bkg_estimator = MMMBackground()
                 try:
                     # Calculate the median of each channel of the demosaiced image
                     # medians = [bkg_estimator(demosaiced_float[..., c]) for c in range(3)]
@@ -1224,10 +1284,54 @@ class TrailRemovalAPP(QWidget):
                 except Exception as e:
                     self.siril.log(f"Could not perform preview white balance: {e}. Preview may have a color cast.", s.LogColor.ORANGE)
                     image_for_stretch = demosaiced_float
+                
+                # --- STRETCH unico sia per detection che visuale solo per immagini CFA ---
+                # Eseguiamo lo stretch QUI, sull'immagine 3D bilanciata,
+                # ricalcolando le statistiche per ogni canale.
+                stretched_channels = []
+                bkg_estimator = MMMBackground()
+                bkg_rms = StdBackgroundRMS()
 
-        # Now, autostretch the correctly balanced image
-        preview_data_8bit = self.autostretch(image_for_stretch, detection=self.show_stretch_check.isChecked())
-        
+                for i in range(3):
+                    channel_data = demosaiced_float[..., i]
+                    try:
+                        # Calcola NUOVE statistiche sul canale 3D bilanciato
+                        median = bkg_estimator(channel_data)
+                        sigma = bkg_rms(channel_data)
+                    except Exception:
+                        median = np.median(channel_data) # Fallback
+                        sigma = np.std(channel_data)
+
+                    # Applica lo stretch (identico a quello MONO, ma per canale)
+                    # Imposta il nero sotto la mediana, il fondo cielo (che è a median) non sarà nero (0), ma un grigio scuro.
+                    # Questo è fondamentale per vedere il segnale debole che emerge dal rumore.
+                    black_point = median - 2.5 * sigma
+
+                    # Questo crea uno stretch molto più "dolce".
+                    # Mappa la gamma da (median - 2.5*s) a (median + 8.0*s) sull'intero display 0-255.
+                    # Questo dà contrasto e dettaglio alle strutture deboli (la traccia) senza appiattirle a bianco puro.
+                    white_point = median + 15.0 * sigma
+                    
+                    channel_stretched = np.clip(channel_data, black_point, white_point)
+                    channel_8bit = cv2.normalize(channel_stretched, None, 0, 255, cv2.NORM_MINMAX)
+                    stretched_channels.append(channel_8bit)
+                
+                preview_data_8bit = cv2.merge(stretched_channels).astype(np.uint8)
+
+            # --- CASO 2: Immagine MONO (vera) ---
+            else:
+                # È un'immagine mono. Usa autostretch, che userà
+                # le statistiche scalari corrette calcolate all'inizio.
+                self.siril.log("True MONO image detected. Using standard autostretch.", s.LogColor.BLUE)
+                preview_data_8bit = self.autostretch(image_for_stretch, detection=self.show_stretch_check.isChecked())
+
+        # --- CASO 3: Immagine RGB (nativa) ---
+        else:
+            # È un'immagine 3D nativa. Usa autostretch, che userà
+            # le statistiche per-canale corrette calcolate all'inizio.
+            self.siril.log("Native RGB image detected. Using standard autostretch.", s.LogColor.BLUE)
+            preview_data_8bit = self.autostretch(image_for_stretch, detection=self.show_stretch_check.isChecked())
+       
         return Image.fromarray(preview_data_8bit)
 
     def update_ai_tuning_parameters(self):
@@ -1293,6 +1397,8 @@ class TrailRemovalAPP(QWidget):
                 seq = self.siril.get_seq()
                 self.current_seq_name = seq.seqname
                 self.current_frame_index = seq.current
+                self.current_frame_label.setText(f"Sequence Mode - Current Frame {self.current_frame_index + 1} / {seq.number}")
+
                 self.siril.log(
                     f"Reload frame: {self.current_frame_index + 1}/{seq.number} from sequence: '{self.current_seq_name}' ",
                     s.LogColor.BLUE
@@ -1300,6 +1406,8 @@ class TrailRemovalAPP(QWidget):
             elif self.siril.is_image_loaded():
                 self.current_seq_name = None
                 self.current_frame_index = None
+                self.current_frame_label.setText("Single Image Mode")
+
                 self.siril.log("Reloaded single image.", s.LogColor.BLUE)
             else:
                 self.siril.error_messagebox("No image or sequence loaded")
@@ -2484,6 +2592,9 @@ class TrailRemovalAPP(QWidget):
         self.reference_image_path = file_path
         self.siril.log(f"Selected reference image: {self.reference_image_path}", s.LogColor.GREEN)
 
+        self.ref_file_label.setText(os.path.basename(file_path))
+        self.ref_file_label.setToolTip(file_path)
+
     def apply_reference(self):
         if not self.reference_image_path:
             self.siril.log("Warning - No reference image selected.", s.LogColor.RED)
@@ -2552,6 +2663,13 @@ class TrailRemovalAPP(QWidget):
             self.siril.log(f"Frame {curr + 1} file successfully restored on disk.\n\n"
                            "IMPORTANT: After restoring, you must manually re-select the frame in Siril's sequence control panel to refresh the view.\n\n",
                            s.LogColor.GREEN)
+            
+            # --- Eliminazione del file di backup ---
+            try:
+                os.remove(backup_file)
+                self.siril.log(f"Backup file '{os.path.basename(backup_file)}' successfully deleted.", s.LogColor.GREEN)
+            except Exception as e_del:
+                self.siril.log(f"Could not delete backup file: {e_del}", s.LogColor.RED)
 
         except Exception as e:
             self.siril.log(f"Error restoring backup: {str(e)}", s.LogColor.RED)
@@ -2754,11 +2872,27 @@ class TrailRemovalAPP(QWidget):
                     
                     elif is_mono:
                         cfa_pattern = None
+                        header = None
                         try:
                             self.siril.log(f"Reading header from header FITS", s.LogColor.BLUE)
-                            header = self.siril.get_image_fits_header(return_as='dict')
+
+                            if self.current_seq_name is not None:
+                                # We are in sequence mode
+                                header = self.siril.get_seq_frame_header(self.current_frame_index, return_as='dict')
+                            else:
+                                # We are in single image mode
+                                header = self.siril.get_image_fits_header(return_as='dict')
+
                             if header:
-                                cfa_pattern = header.get('BAYERPAT') or header.get('CFAIMAG')
+                                # 1. Ottieni il valore grezzo (potrebbe essere 'RGGB ' o None)
+                                cfa_pattern_raw = header.get('BAYERPAT') or header.get('CFAIMAG')
+
+                                # 2. Controlla SE hai ottenuto un valore prima di pulirlo
+                                if cfa_pattern_raw:
+                                    cfa_pattern = cfa_pattern_raw.strip() # Ora è sicuro chiamare .strip()
+                                else:
+                                    cfa_pattern = None # Era None e rimane None
+
                                 bitpix = header.get('BITPIX')
                             else:
                                 self.siril.log("Impossibile recuperare l'header FITS.", s.LogColor.RED)
@@ -2891,16 +3025,92 @@ class TrailRemovalAPP(QWidget):
                             self.siril.log(f"Calculated scale factors (RGB): {np.round(scale, 3)}", s.LogColor.GREEN)
                             ref_data *= scale
 
-                        else: # Monochrome Image
-                            self.siril.log("Calculating background for mono image...", s.LogColor.BLUE)
-                            # Calculate background using photutils for both images
-                            img_background = bkg_estimator(img_np)
-                            ref_background = bkg_estimator(ref_data)
-                            self.siril.log(f"Current img background: {img_background:.3f}, Reference img background: {ref_background:.3f}", s.LogColor.BLUE)
+                        else: # Immagine è 2D (Mono o CFA)
+                            # Dobbiamo leggere l'header QUI per capire se è Mono o CFA
+                            cfa_pattern = None
+                            header = None
+                            try:
+                                self.siril.log(f"Reading header from header FITS (for reference matching)", s.LogColor.BLUE)
+                                header = None
+                                if self.current_seq_name is not None:
+                                    header = self.siril.get_seq_frame_header(self.current_frame_index, return_as='dict')
+                                else:
+                                    header = self.siril.get_image_fits_header(return_as='dict')
 
-                            scale = img_background / ref_background if ref_background != 0 else 1.0
-                            self.siril.log(f"Calculated scale factor: {scale:.3f}", s.LogColor.GREEN)
-                            ref_data *= scale
+                                if header:
+                                    cfa_pattern_raw = header.get('BAYERPAT') or header.get('CFAIMAG')
+                                    if cfa_pattern_raw:
+                                        cfa_pattern = cfa_pattern_raw.strip()
+                            except Exception:
+                                self.siril.log("Could not read FITS header. Assuming true monochrome.", s.LogColor.RED)
+
+                            supported_patterns = ["RGGB", "GBRG", "GRBG", "BGGR"]
+
+                            if cfa_pattern and cfa_pattern.upper() in supported_patterns:
+                                # --- CASO CFA (2D) ---
+                                self.siril.log(f"Calculating background for CFA (Pattern={cfa_pattern})...", s.LogColor.BLUE)
+                                
+                                # Crea maschere per i canali
+                                h, w = img_np.shape
+                                r_mask, g_mask, b_mask = (np.zeros_like(img_np, dtype=bool) for _ in range(3))
+                                p = cfa_pattern.upper()
+                                
+                                if p == "RGGB":
+                                    r_mask[0::2, 0::2] = True
+                                    g_mask[0::2, 1::2] = True
+                                    g_mask[1::2, 0::2] = True
+                                    b_mask[1::2, 1::2] = True
+                                elif p == "GBRG":
+                                    g_mask[0::2, 0::2] = True
+                                    b_mask[0::2, 1::2] = True
+                                    r_mask[1::2, 0::2] = True
+                                    g_mask[1::2, 1::2] = True
+                                elif p == "GRBG":
+                                    g_mask[0::2, 0::2] = True
+                                    r_mask[0::2, 1::2] = True
+                                    b_mask[1::2, 0::2] = True
+                                    g_mask[1::2, 1::2] = True
+                                elif p == "BGGR":
+                                    b_mask[0::2, 0::2] = True
+                                    g_mask[0::2, 1::2] = True
+                                    g_mask[1::2, 0::2] = True
+                                    r_mask[1::2, 1::2] = True
+
+                                # Calcola 3 mediane per l'immagine TARGET
+                                img_bkg_r = bkg_estimator(img_np[r_mask])
+                                img_bkg_g = bkg_estimator(img_np[g_mask])
+                                img_bkg_b = bkg_estimator(img_np[b_mask])
+                                
+                                # Calcola 3 mediane per l'immagine REFERENCE
+                                ref_bkg_r = bkg_estimator(ref_data[r_mask])
+                                ref_bkg_g = bkg_estimator(ref_data[g_mask])
+                                ref_bkg_b = bkg_estimator(ref_data[b_mask])
+
+                                # Calcola 3 fattori di scala
+                                scale_r = img_bkg_r / ref_bkg_r if ref_bkg_r != 0 else 1.0
+                                scale_g = img_bkg_g / ref_bkg_g if ref_bkg_g != 0 else 1.0
+                                scale_b = img_bkg_b / ref_bkg_b if ref_bkg_b != 0 else 1.0
+                                
+                                self.siril.log(f"Calculated scale factors (CFA): R={scale_r:.3f}, G={scale_g:.3f}, B={scale_b:.3f}", s.LogColor.GREEN)
+
+                                # Applica i fattori di scala *solo* ai pixel corretti
+                                ref_data[r_mask] *= scale_r
+                                ref_data[g_mask] *= scale_g
+                                ref_data[b_mask] *= scale_b
+
+                            else:
+                                # --- CASO MONO PURO (2D) ---
+                                if cfa_pattern:
+                                    self.siril.log(f"CFA pattern '{cfa_pattern}' not supported. Treating as Mono.", s.LogColor.RED)
+                                self.siril.log("Calculating background for mono image...", s.LogColor.BLUE)
+                                
+                                img_background = bkg_estimator(img_np)
+                                ref_background = bkg_estimator(ref_data)
+                                self.siril.log(f"Current img background: {img_background:.3f}, Reference img background: {ref_background:.3f}", s.LogColor.BLUE)
+
+                                scale = img_background / ref_background if ref_background != 0 else 1.0
+                                self.siril.log(f"Calculated scale factor: {scale:.3f}", s.LogColor.GREEN)
+                                ref_data *= scale
 
                         self.siril.update_progress("Step: Applying reference...", 0.5)
 
@@ -2912,8 +3122,7 @@ class TrailRemovalAPP(QWidget):
                             ref_data = np.clip(ref_data, 0, max_val)
                         else: # For float data
                             # For floats, clipping isn't strictly necessary if the data is already normalized,
-                            # but we keep it for safety (e.g., from 0 to 1.0).
-                            ref_data = np.clip(ref_data, 0, 1.0)
+                            ref_data = np.clip(ref_data, 0, None) # Clip only at 0, no upper limit
 
                         self.siril.update_progress("Step: Blending images...", 0.6)
 
