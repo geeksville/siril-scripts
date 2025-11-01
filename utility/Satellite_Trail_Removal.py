@@ -81,9 +81,10 @@
 # 2.0.1 - Added Icon App
 # 2.0.2 - Fixed CFA pattern detection
 # 2.0.3 - Improved UI layout for Mode and Reference file display
-#
+# 2.0.4 - Corrected FITS header logic to check for BAYERPAT (standard) and COLORTYP
+# 2.0.5 - New set_seq_frame_pixeldata prefix = None
 
-VERSION = "2.0.3"
+VERSION = "2.0.5"
 
 # --- Core Imports ---
 import sys
@@ -1213,7 +1214,7 @@ class TrailRemovalAPP(QWidget):
 
                 if header:
                     # 1. Ottieni il valore grezzo (potrebbe essere 'RGGB ' o None)
-                    cfa_pattern_raw = header.get('BAYERPAT') or header.get('CFAIMAG')
+                    cfa_pattern_raw = header.get('BAYERPAT') or header.get('COLORTYP')
 
                     # 2. Controlla SE hai ottenuto un valore prima di pulirlo
                     if cfa_pattern_raw:
@@ -2885,7 +2886,7 @@ class TrailRemovalAPP(QWidget):
 
                             if header:
                                 # 1. Ottieni il valore grezzo (potrebbe essere 'RGGB ' o None)
-                                cfa_pattern_raw = header.get('BAYERPAT') or header.get('CFAIMAG')
+                                cfa_pattern_raw = header.get('BAYERPAT') or header.get('COLORTYP')
 
                                 # 2. Controlla SE hai ottenuto un valore prima di pulirlo
                                 if cfa_pattern_raw:
@@ -3038,7 +3039,7 @@ class TrailRemovalAPP(QWidget):
                                     header = self.siril.get_image_fits_header(return_as='dict')
 
                                 if header:
-                                    cfa_pattern_raw = header.get('BAYERPAT') or header.get('CFAIMAG')
+                                    cfa_pattern_raw = header.get('BAYERPAT') or header.get('COLORTYP')
                                     if cfa_pattern_raw:
                                         cfa_pattern = cfa_pattern_raw.strip()
                             except Exception:
@@ -3169,7 +3170,7 @@ class TrailRemovalAPP(QWidget):
                             self.siril.log(f"Backup created: {backup_file_path}", s.LogColor.GREEN)
 
                         # Now overwrite the current frame with the changed data
-                        self.siril.set_seq_frame_pixeldata(curr, final_image_data)
+                        self.siril.set_seq_frame_pixeldata(curr, final_image_data, None)
                         self.siril.log(f"Frame {curr + 1} overwritten with corrected data.", s.LogColor.BLUE)
 
                     except Exception as e:
