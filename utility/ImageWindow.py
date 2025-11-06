@@ -1,17 +1,18 @@
 """
 Siril Image Window - A pseudo-MDI GUI script for storing and swapping images with Siril
-"""
 
 # (c) Adrian Knagg-Baugh 2025
 # Blink Comparator for Siril
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 1.0.2
+# Version 1.0.3
 # 1.0.0  Initial release
 # 1.0.1  Create new image with correct filename when sending image to Siril or swapping
 #        (this is a bit ugly but the proper fix to syncing filenames requires a code change)
 # 1.0.2  Implement the proper fix (with needs_module_version checks so that the correct
 #        version of the fix is used) for synchronizing filenames
+# 1.0.3  Fix bug in copying mono single images from Siril
+"""
 
 import io
 import sys
@@ -1024,7 +1025,7 @@ class SirilImageHolder(QMainWindow):
                     if is_sequence:
                         preview_data = self.siril.get_seq_frame(current_frame, preview=True, linked=self.link).data
                     else:
-                        preview_data = self.siril.get_image_pixeldata(preview=True, linked=self.link).data
+                        preview_data = self.siril.get_image_pixeldata(preview=True, linked=self.link)
                 else:
                     preview_data = None
 
