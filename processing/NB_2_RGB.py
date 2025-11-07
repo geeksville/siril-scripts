@@ -2,7 +2,7 @@
 # NBtoRGBstars for Siril - Ported from tkinter to PyQt6
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 2.0.0
+# Version 2.0.1
 
 import sirilpy as s
 s.ensure_installed("PyQt6", "pillow", "numpy", "astropy")
@@ -20,12 +20,15 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QPixmap, QImage, QPainter
 
-VERSION = "2.0.0"
+VERSION = "2.0.1"
 # 1.0.1 CR: using tkfilebrowser for linux OS
 # 1.0.2 CR: fixing script due to API changes
 # 1.0.3 CM: remove unnecessary import
 # 1.0.4 CR: fixing flipping issue
 # 2.0.0 CR: using PyQt6 instead of tkinter and adding a Clear images button
+# 2.0.1 RS: patch to make OSC-only input respond to Ha:OIII ratio and
+#           apply visible post-processing (SCNR + saturation) so preview
+#           changes even when no narrowband inputs are present.
 
 class ImageLabel(QLabel):
     def __init__(self, parent=None):
@@ -572,7 +575,7 @@ class NBtoRGBstarsInterface(QMainWindow):
                 return 0.299 * img_normalized[..., 0] + 0.587 * img_normalized[..., 1] + 0.114 * img_normalized[..., 2]
             
             return img_normalized
-        
+            
         # Preprocess images
         ha_processed = preprocess_narrowband(ha_image)
         oiii_processed = preprocess_narrowband(oiii_image)
@@ -591,11 +594,20 @@ class NBtoRGBstarsInterface(QMainWindow):
             g_channel = osc_processed[..., 1]
             b_channel = osc_processed[..., 2]
             
-            # Enhance with narrowband if available
+            # --- Updated combine logic: ensure OSC-only still responds to controls ---
+            # If narrowband is absent, we blend the OSC red into green according to the ratio
+            # so the Ha:OIII slider produces a visible change even with OSC-only input.
             r_combined = 0.5 * r_channel + 0.5 * (sii_processed if sii_processed is not None else r_channel)
-            g_combined = ha_to_oiii_ratio * (ha_processed if ha_processed is not None else g_channel) + \
-                        (1 - ha_to_oiii_ratio) * g_channel
-            b_combined = oiii_processed if oiii_processed is not None else b_channel
+
+            if ha_processed is None and oiii_processed is None:
+                # OSC-only: blend R -> G so slider has effect (matches pro behavior)
+                g_combined = ha_to_oiii_ratio * r_channel + (1 - ha_to_oiii_ratio) * g_channel
+                b_combined = b_channel
+            else:
+                # Normal behavior when narrowband data present (or partially present)
+                g_combined = ha_to_oiii_ratio * (ha_processed if ha_processed is not None else g_channel) + \
+                            (1 - ha_to_oiii_ratio) * g_channel
+                b_combined = oiii_processed if oiii_processed is not None else b_channel
         else:
             # Using narrowband images only
             r_combined = 0.5 * ha_processed + 0.5 * (sii_processed if sii_processed is not None else ha_processed)
@@ -616,6 +628,16 @@ class NBtoRGBstarsInterface(QMainWindow):
         
         # Apply SCNR (remove green cast)
         combined_image = self.apply_scnr(combined_image)
+
+        # --- Additional post-processing (saturation boost) to make OSC-only more visible ---
+        try:
+            saturation = 1.2  # tuneable constant; increase for more color punch
+            mean = np.mean(combined_image, axis=-1, keepdims=True)
+            combined_image = mean + (combined_image - mean) * saturation
+            combined_image = np.clip(combined_image, 0, 1)
+        except Exception:
+            # don't fail on post-processing
+            pass
 
         return combined_image
     
@@ -786,3 +808,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
