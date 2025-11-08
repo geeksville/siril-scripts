@@ -53,6 +53,8 @@ Models licensed as CC-BY-NC-SA-4.0
 # 2.0.0  Update GUI to base it on PyQt6
 # 2.0.1  Change import order to avoid DLL load errors on Windows
 # 2.0.2  Fix issue with the deconvolution strength slider not working
+# 2.0.3  Fix issue with sequence processing losing metadata, remove BGE GPU
+#        (causes errors on some systems and fast enough not to need GPU)
 
 import os
 import re
@@ -68,8 +70,8 @@ from packaging.version import Version, parse
 
 import sirilpy as s
 # Check the module version is enough to provide ONNXHelper
-if not s.check_module_version('>=0.6.42'):
-    print("Error: requires sirilpy module >= 0.6.42")
+if not s.check_module_version('>=0.8.6'):
+    print("Error: requires sirilpy module >= 0.8.6")
     sys.exit(1)
 
 from sirilpy import SirilError
@@ -100,7 +102,7 @@ import numpy as np
 from astropy.io import fits
 from appdirs import user_data_dir
 
-VERSION = "2.0.2"
+VERSION = "2.0.3"
 DENOISE_CONFIG_FILENAME = "graxpert_denoise_model.conf"
 BGE_CONFIG_FILENAME = "graxpert_bge_model.conf"
 DECONVOLVE_STARS_CONFIG_FILENAME = "graxpert_deconv_stars_model.conf"
@@ -480,6 +482,8 @@ class GUIInterface(QMainWindow):
 
         # GPU acceleration checkbox
         self.gpu_checkbox = QCheckBox("Use GPU acceleration (if available)")
+        self.gpu_checkbox.setToolTip("Not available for background extraction (causes issues with some backends "
+            "and this operation is fast enough not to need it)")
         self.gpu_checkbox.setChecked(True)
         self.gpu_checkbox.toggled.connect(self._update_gpu_acceleration)
         advanced_layout.addWidget(self.gpu_checkbox)
@@ -835,6 +839,9 @@ class GUIInterface(QMainWindow):
             model_path = self.processor.check_config_file(operation)
             self.model_path = model_path or ""
 
+        # Enable / disable GPU toggle
+        self.gpu_checkbox.setEnabled(operation != 'bge')
+
         # Update model dropdown based on operation
         self._populate_model_dropdown()
 
@@ -1017,7 +1024,6 @@ class GUIInterface(QMainWindow):
                         keep_bg,
                         filename,
                         header,
-                        gpu_acceleration,
                         self._update_progress
                     ),
                     daemon=True
@@ -1081,7 +1087,7 @@ class GUIInterface(QMainWindow):
                 threading.Thread(
                     target=self.processor.process_sequence,
                     args=(sequence_name, model_path, correction_type, smoothing,
-                        keep_bg, gpu_acceleration, self._update_progress),
+                        keep_bg, self._update_progress),
                     daemon=True
                 ).start()
 
@@ -1998,25 +2004,18 @@ class DenoiserProcessing:
             output_seqname = 'denoised_' + input_seqname
 
             # Get files to process
-            files = [self.siril.get_seq_frame_filename(i) for i in range(sequence.number) \
-                    if sequence.imgparam[i].incl]
+            for i in range(sequence.number):
 
-            total_files = len(files)
-            if total_files == 0:
-                if progress_callback:
-                    progress_callback("No files to process in sequence")
-                return False
-
-            for i, f in enumerate(files):
                 # Reset the cached image
                 self.reset_cache()
 
-                file_progress = i / total_files
+                file_progress = i / sequence.number
                 if progress_callback:
-                    progress_callback(f"Processing file {i+1} of {total_files}", file_progress)
+                    progress_callback(f"Processing file {i+1} of {sequence.number}", file_progress)
 
                 # Get the pixel data and FITS header
-                self.cached_original_image, header = get_image_data_from_file(self.siril, f)
+                frame = self.siril.get_seq_frame(i)
+                self.cached_original_image = frame.data
                 if self.cached_original_image is None:
                     print(f"Error loading file {f}, skipping this file...")
                     continue
@@ -2030,8 +2029,8 @@ class DenoiserProcessing:
                 def file_progress_callback(msg, p = None):
                     if progress_callback:
                         if p:
-                            overall_progress = file_progress + p / total_files
-                            progress_callback(f"File {i+1}/{total_files}: {msg}", overall_progress)
+                            overall_progress = file_progress + p / sequence.number
+                            progress_callback(f"File {i+1}/{sequence.number}: {msg}", overall_progress)
                         else:
                             progress_callback(msg)
 
@@ -2045,14 +2044,11 @@ class DenoiserProcessing:
                 )
 
                 if denoised is None:
+                    print(f"Error: no denoised result obtained for frame {i}: skipping...")
                     continue
 
                 # Save the processed image
-                output_path = os.path.join(self.siril.get_siril_wd(),
-                                           f"{output_seqname}{(i+1):05d}.fit")
-                print(f"Saving frame as {output_path}")
-                save_fits(denoised, output_path, original_header=header,
-                            history_text=f"GraXpert denoise (strength {strength:.2f})")
+                self.siril.set_seq_frame_pixeldata(i, denoised, prefix="denoised_")
 
             # Create the new sequence
             self.siril.create_new_seq(output_seqname)
@@ -2464,7 +2460,7 @@ class DeconvolutionProcessing:
                        gpu_acceleration=True,
                        progress_callback=None):
         """
-        Process a sequence with deconvolution and blending.
+        Process a sequence with deconvolution
 
         Args:
             sequence_name: Name of the sequence to process
@@ -2494,21 +2490,13 @@ class DeconvolutionProcessing:
             sequence = self.siril.get_seq()
             input_seqname = sequence.seqname
             print(model_path)
-            output_seqname = 'deconv_obj_' + input_seqname \
-                if 'deconvolution-object' in model_path else \
-                'deconv_stellar_' + input_seqname
+            deconv_prefix = 'deconv_obj_' if 'deconvolution-object' in model_path else \
+                'deconv_stellar_'
+            output_seqname = deconv_prefix + input_seqname
 
-            # Get files to process
-            files = [self.siril.get_seq_frame_filename(i) for i in range(sequence.number) \
-                    if sequence.imgparam[i].incl]
+            total_files = sequence.number
 
-            total_files = len(files)
-            if total_files == 0:
-                if progress_callback:
-                    progress_callback("No files to process in sequence")
-                return False
-
-            for i, f in enumerate(files):
+            for i in range(total_files):
                 # Reset the cached image
                 self.reset_cache()
 
@@ -2517,7 +2505,8 @@ class DeconvolutionProcessing:
                     progress_callback(f"Processing file {i+1} of {total_files}", file_progress)
 
                 # Get the pixel data and FITS header
-                self.cached_original_image, header = get_image_data_from_file(self.siril, f)  # Assuming this function exists
+                frame = self.siril.get_seq_frame(i)
+                self.cached_original_image = frame.data
                 if self.cached_original_image is None:
                     print(f"Error loading file {f}, skipping this file...")
                     continue
@@ -2549,11 +2538,7 @@ class DeconvolutionProcessing:
                     continue
 
                 # Save the processed image
-                output_path = os.path.join(self.siril.get_siril_wd(),
-                                           f"{output_seqname}{(i+1):05d}.fit")
-                print(f"Saving frame as {output_path}")
-                save_fits(deconvolved, output_path, original_header=header,
-                            history_text=f"GraXpert deconvolve (strength {strength:.2f}, psfsize {psfsize:.2f})")
+                self.siril.set_seq_frame_pixeldata(i, deconvolved, prefix=deconv_prefix)
 
             # Create the new sequence
             self.siril.create_new_seq(output_seqname)
@@ -2689,7 +2674,7 @@ class BGEProcessing:
             return None
 
     def extract_background_ai(self, image, ai_path, smoothing=0,
-                              ai_gpu_acceleration=True, progress_callback=None):
+                            ai_gpu_acceleration=True, progress_callback=None):
         """
         Apply AI-based background extraction to an image.
 
@@ -2714,7 +2699,7 @@ class BGEProcessing:
         # Convert to hwc format if needed:
         was_planar = False
         if image.shape[0] < 4 and len(image.shape) == 3 and image.shape[0] < image.shape[1] \
-                              and image.shape[0] < image.shape[2]:
+                            and image.shape[0] < image.shape[2]:
             was_planar = True
             image = np.transpose(image, (1, 2, 0))
 
@@ -2735,7 +2720,7 @@ class BGEProcessing:
             imarray_shrink = np.expand_dims(imarray_shrink, -1)
         # Pad the image to avoid edge artifacts
         imarray_shrink = np.pad(imarray_shrink, ((padding, padding), (padding, padding), (0, 0)),
-                               mode="edge")
+                            mode="edge")
         if progress_callback:
             progress_callback("Computing image statistics...", 0.1)
 
@@ -2754,8 +2739,8 @@ class BGEProcessing:
         # For grayscale, convert to RGB for the AI model
         if num_colors == 1:
             imarray_shrink = np.array([imarray_shrink[:, :, 0],
-                                       imarray_shrink[:, :, 0],
-                                       imarray_shrink[:, :, 0]])
+                                    imarray_shrink[:, :, 0],
+                                    imarray_shrink[:, :, 0]])
             imarray_shrink = np.moveaxis(imarray_shrink, 0, -1)
 
         if progress_callback:
@@ -2817,16 +2802,20 @@ class BGEProcessing:
 
         # Resize back to original dimensions
         background = cv2.resize(background, dsize=(original_shape[1], original_shape[0]),
-                               interpolation=cv2.INTER_LINEAR)
+                            interpolation=cv2.INTER_LINEAR)
 
-        if was_planar:
-            background = np.transpose(background, (2, 0, 1))
-
-        # Ensure output has the same shape as input
-        if len(background.shape) == 2 and len(original_shape) == 3:
+        # Ensure output has the same shape as input - handle mono BEFORE planar transform
+        if was_mono and len(background.shape) == 3:
+            background = background[:, :, 0]  # Extract first channel
+        elif len(background.shape) == 2 and len(original_shape) == 3:
             background = np.expand_dims(background, -1)
-        elif was_mono and len(background.shape) == 3:
-            background = background[0, :, :]
+
+        # NOW apply planar transform if needed
+        if was_planar:
+            if len(background.shape) == 2:
+                background = np.expand_dims(background, 0)  # Add channel dim before transpose
+            else:
+                background = np.transpose(background, (2, 0, 1))
 
         # Cache the extracted background
         self.cached_background_image = background
@@ -2838,7 +2827,7 @@ class BGEProcessing:
         return background
 
     def process_image(self, model_path, correction_type="subtraction", smoothing=0,
-                    keep_bg=False, filename=None, header=None, gpu_acceleration=True,
+                    keep_bg=False, filename=None, header=None,
                     progress_callback=None):
         """
         Process an image with background extraction and correction.
@@ -2850,7 +2839,6 @@ class BGEProcessing:
             keep_bg: whether to save the extracted background
             filename: filename (for use with keep_bg)
             header: original header (for use with keep_bg)
-            gpu_acceleration: Whether to use GPU acceleration
             progress_callback: Function to call with progress updates
 
         Returns:
@@ -2884,7 +2872,8 @@ class BGEProcessing:
                 pixel_data,
                 model_path,
                 smoothing,
-                gpu_acceleration,
+                False, # Always disable GPU acceleration for now, as it causes model errors on some
+                # backends and the CPU process is fast enough
                 progress_callback
             )
 
@@ -2945,7 +2934,7 @@ class BGEProcessing:
             return None
 
     def process_sequence(self, sequence_name, model_path, correction_type="subtraction",
-                       smoothing=0.5, keep_bg=False, gpu_acceleration=True,
+                       smoothing=0.5, keep_bg=False,
                        progress_callback=None):
         """
         Process a sequence with background extraction and correction.
@@ -2955,7 +2944,6 @@ class BGEProcessing:
             model_path: Path to the ONNX model
             correction_type: Type of correction ('subtraction' or 'division')
             smoothing: Amount of smoothing to apply (0-1)
-            gpu_acceleration: Whether to use GPU acceleration
             progress_callback: Function to call with progress updates
 
         Returns:
@@ -2977,18 +2965,9 @@ class BGEProcessing:
             sequence = self.siril.get_seq()
             input_seqname = sequence.seqname
             output_seqname = 'bge_' + input_seqname
+            total_files = sequence.number
 
-            # Get files to process
-            files = [self.siril.get_seq_frame_filename(i) for i in range(sequence.number)
-                    if sequence.imgparam[i].incl]
-
-            total_files = len(files)
-            if total_files == 0:
-                if progress_callback:
-                    progress_callback("No files to process in sequence")
-                return False
-
-            for i, f in enumerate(files):
+            for i in range(total_files):
                 # Reset the cached image
                 self.reset_cache()
 
@@ -2997,7 +2976,8 @@ class BGEProcessing:
                     progress_callback(f"Processing file {i+1} of {total_files}", file_progress)
 
                 # Get the pixel data and FITS header
-                self.cached_original_image, header = get_image_data_from_file(self.siril, f)
+                frame = self.siril.get_seq_frame(i)
+                self.cached_original_image = frame.data
                 if self.cached_original_image is None:
                     print(f"Error loading file {f}, skipping this file...")
                     continue
@@ -3011,19 +2991,14 @@ class BGEProcessing:
                         else:
                             progress_callback(msg)
 
-                output_path = os.path.join(self.siril.get_siril_wd(),
-                                          f"{output_seqname}{(i+1):05d}.fit")
-                header = self.siril.get_seq_frame_header(i)
-
                 # Process the image
                 corrected = self.process_image(
                     model_path,
                     correction_type,
                     smoothing,
                     keep_bg,
-                    output_path,
-                    header,
-                    gpu_acceleration,
+                    self.siril.get_seq_frame_filename(i),
+                    frame.header,
                     file_progress_callback
                 )
 
@@ -3031,9 +3006,8 @@ class BGEProcessing:
                     continue
 
                 # Save the processed image
-                print(f"Saving frame as {output_path}")
-                save_fits(corrected, output_path, original_header=header,
-                             history_text=f"GraXpert BGE ({correction_type})")
+                print(f"Saving frame {i}")
+                self.siril.set_seq_frame_pixeldata(i, corrected, prefix="bge_")
 
             # Create the new sequence
             self.siril.create_new_seq(output_seqname)
@@ -3159,7 +3133,7 @@ class DenoiserCLI:
         return available_models[highest_model]
 
     def process_image(self):
-        """Process a single image."""
+        """Process a single image (denoising)."""
         # Set GPU usage based on arguments
         use_gpu = self.args.gpu and not self.args.nogpu
 
@@ -3190,7 +3164,7 @@ class DenoiserCLI:
         print("Image processing complete")
 
     def process_sequence(self):
-        """Process a sequence."""
+        """Process a sequence (denoising)."""
         # Set GPU usage based on arguments
         use_gpu = self.args.gpu and not self.args.nogpu
 
@@ -3344,7 +3318,7 @@ class DeconvolutionCLI:
         return available_models[highest_model]
 
     def process_image(self):
-        """Process a single image."""
+        """Process a single image (deconvolution)."""
         # Set GPU usage based on arguments
         use_gpu = self.args.gpu and not self.args.nogpu
 
@@ -3376,7 +3350,7 @@ class DeconvolutionCLI:
         print("Image processing complete")
 
     def process_sequence(self):
-        """Process a sequence."""
+        """Process a sequence (deconvolution)."""
         # Set GPU usage based on arguments
         use_gpu = self.args.gpu and not self.args.nogpu
 
@@ -3463,9 +3437,6 @@ class BackgroundExtractionCLI:
         parser.add_argument("-model", type=str, help="Model name to use (directory name in GraXpert models folder)")
         parser.add_argument("-keep_bg", action="store_true", help="Keep the extracted background")
 
-        # Boolean flag for GPU usage - store_true/store_false approach
-        parser.add_argument("-gpu", action="store_true", default=True, help="Enable GPU acceleration (default)")
-        parser.add_argument("-nogpu", action="store_true", default=False, help="Disable GPU acceleration")
         # List models flag
         parser.add_argument("-listmodels", action="store_true", help="List available models and exit")
 
@@ -3514,11 +3485,9 @@ class BackgroundExtractionCLI:
         return available_models[highest_model]
 
     def process_image(self):
-        """Process a single image."""
-        # Set GPU usage based on arguments
-        use_gpu = self.args.gpu and not self.args.nogpu
+        """Process a single image (BGE)."""
 
-        print(f"Processing image with correction={self.args.correction}, smoothing={self.args.smoothing}, keep_bg={self.args.keep_bg}, gpu={use_gpu}")
+        print(f"Processing image with correction={self.args.correction}, smoothing={self.args.smoothing}, keep_bg={self.args.keep_bg}")
 
         # Cache the original image
         self.processor.cached_original_image = self.siril.get_image_pixeldata()
@@ -3540,7 +3509,6 @@ class BackgroundExtractionCLI:
                 self.args.keep_bg,
                 filename,
                 header,
-                use_gpu,
                 self.update_progress
             ),
             daemon=True
@@ -3551,9 +3519,7 @@ class BackgroundExtractionCLI:
         print("Image processing complete")
 
     def process_sequence(self):
-        """Process a sequence."""
-        # Set GPU usage based on arguments
-        use_gpu = self.args.gpu and not self.args.nogpu
+        """Process a sequence (BGE)."""
 
         sequence_name = self.siril.get_seq().seqname
         print(f"Processing sequence {sequence_name} with strength={self.args.strength}, batch={self.args.batch}, gpu={use_gpu}")
@@ -3567,7 +3533,6 @@ class BackgroundExtractionCLI:
                 self.args.correction,
                 self.args.smoothing,
                 self.args.keep_bg,
-                use_gpu,
                 self.update_progress
             ),
             daemon=True
