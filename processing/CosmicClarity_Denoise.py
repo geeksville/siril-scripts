@@ -10,7 +10,7 @@
 # *MUST* reproduce the bug either standalone from the commandline or using SetiAstroSuite Pro before
 # reporting it.
 
-# Version 2.0.1
+# Version 2.0.2
 # 1.0.1: AKB - convert "requires" to use exception handling
 # 1.0.2: Miscellaneous fixes
 # 1.0.3: Use tiffile instead of savetif32 to save the input file
@@ -22,6 +22,7 @@
 # 2.0.0: Migrate GUI from tkinter to PyQt6, add image caching and
 #        denoise-strength blending.
 # 2.0.1: Update script to work correctly with pyscript
+# 2.0.2: Fix GPU use when run from inside a flatpak sandbox
 """
 
 import os
@@ -65,6 +66,12 @@ def run_cosmic_clarity_process(executable_path: str, mode: str, use_gpu: bool, p
     ]
     if not use_gpu:
         command.append("--disable_gpu")
+
+    in_flatpak = os.environ.get("container") == "flatpak"
+    if in_flatpak:
+        # Run executable on host to access host environment & GPU drivers
+        command = ["flatpak-spawn", "--host"] + command
+        print("Detected Flatpak sandbox — using flatpak-spawn to run Cosmic Clarity.")
 
     process = subprocess.Popen(
         command,

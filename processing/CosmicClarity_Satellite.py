@@ -11,11 +11,12 @@
 # *MUST* reproduce the bug either standalone from the commandline or using SetiAstroSuite Pro before
 # reporting it.
 
-# Version: 1.2.1
+# Version: 1.2.2
 # 1.2.0: First PyQt6 version of the script
 # 1.2.1: Updated to work better with pyscript. Note that unlike other CosmicClarity scripts this
 #        one shows its own GUI, so it may not work 100% headlessly though it does work in scripts
 #        called from Siril's GUI. This is a limitation of CC and not something I can work around.
+# 1.2.2: Fix GPU use when run inside a flatpak sandbox
 """
 
 import sirilpy as s
@@ -31,7 +32,7 @@ from pathlib import Path
 import numpy as np
 import tifffile as tiffile
 
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 
 # ------------------------------
 # Shared utility functions
@@ -77,6 +78,12 @@ def run_cosmic_clarity_satellite_process(executable_path: str, input_dir: str,
         cmd.append("--clip-trail")
     else:
         cmd.append("--no-clip-trail")
+
+    in_flatpak = os.environ.get("container") == "flatpak"
+    if in_flatpak:
+        # Run executable on host to access host environment & GPU drivers
+        cmd = ["flatpak-spawn", "--host"] + cmd
+        print("Detected Flatpak sandbox — using flatpak-spawn to run Cosmic Clarity.")
 
     process = subprocess.Popen(
         cmd,

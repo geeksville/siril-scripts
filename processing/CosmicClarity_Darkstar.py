@@ -10,9 +10,10 @@
 # *MUST* reproduce the bug either standalone from the commandline or using SetiAstroSuite Pro before
 # reporting it.
 
-# Version 1.1.1
+# Version 1.1.2
 # 1.1.0 First stable release
 # 1.1.1 Fix issue when running the script using pyscript
+# 1.1.2 Fix GPU use when run from inside a flatpak sandbox
 
 import sirilpy as s
 s.ensure_installed("PyQt6", "tiffile")
@@ -27,7 +28,7 @@ from pathlib import Path
 import numpy as np
 import tifffile as tiffile
 
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 
 # ------------------------------
 # Shared utility functions
@@ -63,6 +64,12 @@ def run_cosmic_clarity_darkstar_process(executable_path: str, exe_dir: str,
         cmd.extend(["--chunk_size", str(int(chunk_size))])
     if overlap is not None:
         cmd.extend(["--overlap", str(int(overlap))])
+
+    in_flatpak = os.environ.get("container") == "flatpak"
+    if in_flatpak:
+        # Run executable on host to access host environment & GPU drivers
+        cmd = ["flatpak-spawn", "--host"] + cmd
+        print("Detected Flatpak sandbox — using flatpak-spawn to run Cosmic Clarity.")
 
     process = subprocess.Popen(
         cmd,

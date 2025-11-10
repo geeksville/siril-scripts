@@ -9,7 +9,7 @@
 # *MUST* reproduce the bug either standalone from the commandline or using SetiAstroSuite Pro before
 # reporting it.
 
-# Version: 2.1.1
+# Version: 2.1.3
 # 1.0.1: convert "requires" to use exception handling
 # 1.0.2: misc updates
 # 1.0.3: Use tiffile instead of savetif32 to save the input file
@@ -23,6 +23,9 @@
 # 1.0.7: Fix an error that occurred if the config file was missing
 # 2.1.0  PyQt6 threaded worker port
 # 2.1.1  Fix pyscript operation
+# 2.1.2  Fix GPU use when called from inside a flatpak sandbox
+# 2.1.3  Improve undo history and log messaging (helps Workflow_Summarizer, closes
+#        siril-scripts:#60)
 
 import sirilpy as s
 s.ensure_installed("tiffile", "PyQt6")
@@ -37,7 +40,7 @@ from pathlib import Path
 import numpy as np
 import tiffile
 
-VERSION = "2.1.1"
+VERSION = "2.1.3"
 
 # ------------------------------
 # Shared utility functions
@@ -76,6 +79,12 @@ def run_cosmic_clarity_sharpen_process(executable_path: str, mode: str, stellar_
         command.append("--auto_detect_psf")
     if separate_channels:
         command.append("--sharpen_channels_separately")
+
+    in_flatpak = os.environ.get("container") == "flatpak"
+    if in_flatpak:
+        # Run executable on host to access host environment & GPU drivers
+        command = ["flatpak-spawn", "--host"] + command
+        print("Detected Flatpak sandbox — using flatpak-spawn to run Cosmic Clarity.")
 
     process = subprocess.Popen(
         command,
@@ -264,11 +273,17 @@ def run_cli_mode(args):
             pixel_data = np.rint(pixel_data * 65535).astype(np.uint16)
 
         with siril.image_lock():
-            siril.undo_save_state(f"Cosmic Clarity sharpen ({mode})")
+            self.siril.undo_save_state(f"CC sharpen ({self.sharpening_mode}, "
+                                                     f"Stel_amt={self.stellar_amount}, "
+                                                     f"Nstel_str={self.non_stellar_strength}, "
+                                                     f"Nstel_amt={self.non_stellar_amount})")
             siril.set_image_pixeldata(pixel_data)
 
         siril.reset_progress()
-        print("Cosmic Clarity sharpening completed successfully.")
+        print("Cosmic Clarity sharpening completed successfully ({self.sharpening_mode}, "
+                                                     f"Stel_amt={self.stellar_amount}, "
+                                                     f"Nstel_str={self.non_stellar_strength}, "
+                                                     f"Nstel_amt={self.non_stellar_amount})")
     except Exception as e:
         print(f"Error in CLI apply: {e}", file=sys.stderr)
         sys.exit(1)
@@ -577,11 +592,17 @@ def run_gui_mode():
                     pixel_data = np.rint(pixel_data * 65535).astype(np.uint16)
 
                 with self.siril.image_lock():
-                    self.siril.undo_save_state(f"Cosmic Clarity sharpen ({mode})")
+                    self.siril.undo_save_state(f"CC sharpen ({self.sharpening_mode}, "
+                                                     f"Stel_amt={self.stellar_amount}, "
+                                                     f"Nstel_str={self.non_stellar_strength}, "
+                                                     f"Nstel_amt={self.non_stellar_amount})")
                     self.siril.set_image_pixeldata(pixel_data)
 
                 self.siril.reset_progress()
-                self.siril.log("Cosmic Clarity sharpening complete.")
+                print("Cosmic Clarity sharpening completed successfully ({self.sharpening_mode}, "
+                                                     f"Stel_amt={self.stellar_amount}, "
+                                                     f"Nstel_str={self.non_stellar_strength}, "
+                                                     f"Nstel_amt={self.non_stellar_amount})")
             except Exception as e:
                 print(f"Error in finished handler: {e}")
                 self.siril.reset_progress()

@@ -12,9 +12,10 @@
 # *MUST* reproduce the bug either standalone from the commandline or using SetiAstroSuite Pro before
 # reporting it.
 
-# Version: 2.0.1
+# Version: 2.0.2
 # 2.0.0 PyQt6 threaded worker port by AKB
 # 2.0.1 Fixes operation with pyscript
+# 2.0.2 Fix GPU use when run from inside a flatpak sandbox
 """
 
 import sirilpy as s
@@ -27,7 +28,7 @@ import argparse
 import subprocess
 from pathlib import Path
 
-VERSION = "2.0.1"
+VERSION = "2.0.2"
 
 # ------------------------------
 # Shared utility functions
@@ -56,6 +57,12 @@ def run_cosmic_clarity_superres_process(executable_path: str, input_file: str,
         f"--scale={scale}",
         f"--model_dir={model_dir}"
     ]
+
+    in_flatpak = os.environ.get("container") == "flatpak"
+    if in_flatpak:
+        # Run executable on host to access host environment & GPU drivers
+        command = ["flatpak-spawn", "--host"] + command
+        print("Detected Flatpak sandbox — using flatpak-spawn to run Cosmic Clarity.")
 
     process = subprocess.Popen(
         command,
