@@ -18,6 +18,13 @@ a file attachment for more efficient processing, however extremely long logs
 may still exceed Google Gemini's input token limit.
 If you have set Siril's language preference, the output will be requested in 
 that language; if the preference is not set, output will default to English.
+
+*** NOTE: ***
+This script is not recommended for use with Siril 1.4.x as not
+all of the image operations actually produce log messages as they should. This
+will be rectified in 1.6.x but unfortunately missed the string freeze for
+1.4.x.
+
 """
 
 import sys
@@ -414,7 +421,15 @@ class SirilSummaryGUI(QMainWindow):
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
         
-        # API Key section
+        # Warning message
+        warning_label = QLabel(
+            "⚠️ This script is not recommended for use with Siril 1.4.x as not "
+            "all of the image operations actually produce log messages as they should. "
+            "This will be rectified in 1.6.x but unfortunately missed the string freeze for 1.4.x."
+        )
+        warning_label.setWordWrap(True)
+        layout.addWidget(warning_label)
+                # API Key section
         api_layout = QHBoxLayout()
         api_label = QLabel("Google Gemini API Key:")
         self.api_key_input = QLineEdit()
