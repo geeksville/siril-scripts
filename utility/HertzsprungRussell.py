@@ -9,6 +9,8 @@ The script detects stars in the image using Siril's star detection, queries
 Gaia DR3 for photometric data, matches the stars, and plots a color-magnitude 
 diagram showing stellar classification with reference curves.
 
+Inspired by Mike Cranfield's script
+
 (c) Cyril Richard 2025
 SPDX-License-Identifier: GPL-3.0-or-later
 """
