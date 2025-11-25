@@ -3,11 +3,11 @@
 
 This script creates a Hertzsprung-Russell diagram from an astronomical image
 with astrometric solution by querying Gaia DR3 directly and using Siril's
-PSF photometry.
+photometry.
 
-The script detects stars in the image using Siril's star detection, queries 
-Gaia DR3 for photometric data, matches the stars, and plots a color-magnitude 
-diagram showing stellar classification with reference curves.
+The script offers two photometry methods:
+1. PSF Fitting (findstar): Faster PSF model fitting on detected stars
+2. Aperture Photometry: Direct flux measurement on Gaia star positions
 
 Inspired by Mike Cranfield's script
 
@@ -17,6 +17,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 # Version History
 # 1.0.0  Initial script release
+# 1.1.0  Added choice between two photometry methods and a way to export data
 
 import sirilpy as s
 s.ensure_installed('PyQt6')
@@ -32,7 +33,8 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QHBoxLayout, QLabel, QSlider, QPushButton,
                             QGroupBox, QMessageBox, QSpinBox, QDoubleSpinBox,
                             QCheckBox, QSplitter, QProgressBar, QTableWidget,
-                            QTableWidgetItem, QHeaderView, QComboBox, QScrollArea)
+                            QTableWidgetItem, QHeaderView, QComboBox, QScrollArea,
+                            QFileDialog, QDialog)
 from PyQt6.QtCore import Qt, QObject, pyqtSignal, QThread
 from PyQt6.QtGui import QFont, QPixmap, QIcon
 
@@ -45,12 +47,102 @@ from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
 import astropy.units as u
 from astroquery.gaia import Gaia
+import csv
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 if not s.check_module_version('>=0.6.42'):
     print("Error: requires sirilpy module >= 0.6.42")
     sys.exit(1)
+
+# ============================================================================
+# Custom Navigation Toolbar with CSV Export
+# ============================================================================
+
+class CustomNavigationToolbar(NavigationToolbar):
+    """Custom toolbar with CSV export button"""
+    
+    def __init__(self, canvas, parent, star_data_getter):
+        self.star_data_getter = star_data_getter
+        super().__init__(canvas, parent)
+        
+        # Add separator and CSV export button after initialization
+        self.addSeparator()
+        
+        # Add CSV export action
+        self.csv_action = self.addAction('Export CSV', self.export_csv)
+        self.csv_action.setToolTip('Export star data to CSV file')
+        self.csv_action.setEnabled(False)  # Initially disabled
+    
+    def enable_export(self, enabled=True):
+        """Enable or disable CSV export button"""
+        self.csv_action.setEnabled(enabled)
+    
+    def export_csv(self):
+        """Export star data to CSV file"""
+        star_data = self.star_data_getter()
+        
+        if not star_data:
+            return
+        
+        filename, _ = QFileDialog.getSaveFileName(
+            self.parent(),
+            "Export Star Data",
+            "hr_diagram_data.csv",
+            "CSV Files (*.csv);;All Files (*)"
+        )
+        
+        if not filename:
+            return
+        
+        try:
+            with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+                fieldnames = [
+                    'source_id', 'ra', 'dec', 'x', 'y',
+                    'parallax', 'distance_ly',
+                    'pmra', 'pmdec',
+                    'g_mag', 'bp_mag', 'rp_mag', 'gaia_color_bp_rp',
+                    'abs_mag',
+                    'img_mag_r', 'img_mag_g', 'img_mag_b',
+                    'img_mag_calib', 'img_color_bp_rp_equiv', 'img_color_b_r_raw',
+                    'fwhm_arcsec', 'snr'
+                ]
+                
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                
+                for star in star_data:
+                    row = {
+                        'source_id': star['source_id'],
+                        'ra': f"{star['ra']:.6f}",
+                        'dec': f"{star['dec']:.6f}",
+                        'x': f"{star['x']:.2f}",
+                        'y': f"{star['y']:.2f}",
+                        'parallax': f"{star['parallax']:.6f}",
+                        'distance_ly': f"{star['distance']:.2f}" if star['distance'] > 0 else '',
+                        'pmra': f"{star['pmra']:.4f}",
+                        'pmdec': f"{star['pmdec']:.4f}",
+                        'g_mag': f"{star['g_mag']:.4f}",
+                        'bp_mag': f"{star['bp_mag']:.4f}",
+                        'rp_mag': f"{star['rp_mag']:.4f}",
+                        'gaia_color_bp_rp': f"{star['color']:.4f}",
+                        'abs_mag': f"{star['abs_mag']:.4f}" if star['abs_mag'] is not None else '',
+                        'img_mag_r': f"{star['img_mag_r']:.4f}" if 'img_mag_r' in star else '',
+                        'img_mag_g': f"{star['img_mag_g']:.4f}" if 'img_mag_g' in star else '',
+                        'img_mag_b': f"{star['img_mag_b']:.4f}" if 'img_mag_b' in star else '',
+                        'img_mag_calib': f"{star['img_mag_calib']:.4f}" if star.get('img_mag_calib') is not None else '',
+                        'img_color_bp_rp_equiv': f"{star['img_color']:.4f}" if star.get('img_color') is not None else '',
+                        'img_color_b_r_raw': f"{star['img_color_raw']:.4f}" if star.get('img_color_raw') is not None else '',
+                        'fwhm_arcsec': f"{star['fwhm']:.4f}" if star.get('fwhm', 0) > 0 else '',
+                        'snr': f"{star['snr']:.2f}" if star.get('snr', 0) > 0 else ''
+                    }
+                    writer.writerow(row)
+            
+            QMessageBox.information(self.parent(), "Export Complete", 
+                                  f"Successfully exported {len(star_data)} stars to:\n{filename}")
+        
+        except Exception as e:
+            QMessageBox.critical(self.parent(), "Export Error", f"Failed to export CSV:\n{str(e)}")
 
 # ============================================================================
 # Photometric Calibration Functions
@@ -254,75 +346,132 @@ class GaiaQueryWorker(QObject):
     progress_update = pyqtSignal(str, int)
     finished = pyqtSignal(object, object, object)
     
-    def __init__(self, siril, min_mag, max_mag, max_stars, max_img_mag):
+    def __init__(self, siril, min_mag, max_mag, max_stars, max_img_mag, photometry_method):
         super().__init__()
         self.siril = siril
         self.min_mag = min_mag
         self.max_mag = max_mag
         self.max_stars = max_stars
         self.max_img_mag = max_img_mag
+        self.photometry_method = photometry_method  # 'findstar' or 'gaia_positions'
     
     def run(self):
         try:
-            self.progress_update.emit("Detecting stars in image...", 10)
-            
-            image_stars = self.detect_image_stars()
-            
-            if image_stars is None or len(image_stars) == 0:
-                self.finished.emit(None, "No stars detected in image. Try adjusting star detection settings in Siril.", None)
-                return
-            
-            print(f"Detected {len(image_stars)} stars in image")
-            
-            self.progress_update.emit("Querying Gaia DR3...", 30)
-            
-            gaia_results = self.query_gaia_field()
-            
-            if gaia_results is None or len(gaia_results) == 0:
-                self.finished.emit(None, "No Gaia stars found in field", None)
-                return
-            
-            self.progress_update.emit("Matching stars...", 60)
-            
-            star_data = self.match_gaia_to_detected_stars(gaia_results, image_stars)
-            
-            if len(star_data) == 0:
-                self.finished.emit(None, "No stars matched between Gaia and image", None)
-                return
-            
-            self.progress_update.emit("Calibrating photometry...", 90)
-            
-            # Calculate photometric calibration with linear regression
-            mag_zp, color_slope, color_intercept, calib_stats = calculate_zero_points(star_data)
-            
-            # Apply calibration to all stars
-            for star in star_data:
-                img_color = calculate_color_index(star)
-                if img_color is not None:
-                    # Transform to BP-RP equivalent using linear regression
-                    star['img_color'] = color_slope * img_color + color_intercept
-                    star['img_color_raw'] = img_color  # Keep original for reference
-                else:
-                    star['img_color'] = None
-                    star['img_color_raw'] = None
-                
-                if 'img_mag_g' in star:
-                    star['img_mag_calib'] = star['img_mag_g'] + mag_zp
-                else:
-                    star['img_mag_calib'] = None
-            
-            self.progress_update.emit("Complete", 100)
-            self.finished.emit(star_data, None, calib_stats)
+            if self.photometry_method == 'findstar':
+                self.run_findstar_method()
+            else:
+                self.run_gaia_positions_method()
             
         except Exception as e:
             import traceback
             traceback.print_exc()
             self.finished.emit(None, f"Error: {str(e)}", None)
     
+    def run_findstar_method(self):
+        """Run photometry using findstar + matching"""
+        self.progress_update.emit("Detecting stars in image...", 10)
+        
+        image_stars = self.detect_image_stars()
+        
+        if image_stars is None or len(image_stars) == 0:
+            self.finished.emit(None, "No stars detected in image. Try adjusting star detection settings in Siril.", None)
+            return
+        
+        print(f"Detected {len(image_stars)} stars in image")
+        
+        self.progress_update.emit("Querying Gaia DR3...", 30)
+        
+        gaia_results = self.query_gaia_field()
+        
+        if gaia_results is None or len(gaia_results) == 0:
+            self.finished.emit(None, "No Gaia stars found in field", None)
+            return
+        
+        self.progress_update.emit("Matching stars...", 60)
+        
+        star_data = self.match_gaia_to_detected_stars(gaia_results, image_stars)
+        
+        if len(star_data) == 0:
+            self.finished.emit(None, "No stars matched between Gaia and image", None)
+            return
+        
+        self.progress_update.emit("Calibrating photometry...", 90)
+        
+        # Calculate photometric calibration with linear regression
+        mag_zp, color_slope, color_intercept, calib_stats = calculate_zero_points(star_data)
+        
+        # Apply calibration to all stars
+        for star in star_data:
+            img_color = calculate_color_index(star)
+            if img_color is not None:
+                # Transform to BP-RP equivalent using linear regression
+                star['img_color'] = color_slope * img_color + color_intercept
+                star['img_color_raw'] = img_color  # Keep original for reference
+            else:
+                star['img_color'] = None
+                star['img_color_raw'] = None
+            
+            if 'img_mag_g' in star:
+                star['img_mag_calib'] = star['img_mag_g'] + mag_zp
+            else:
+                star['img_mag_calib'] = None
+        
+        self.progress_update.emit("Complete", 100)
+        self.finished.emit(star_data, None, calib_stats)
+    
+    def run_gaia_positions_method(self):
+        """Run aperture photometry directly on Gaia positions"""
+        # Check if Siril version supports aperture photometry (requires 1.4.0)
+        try:
+            self.siril.cmd("requires", "1.4.0")
+        except s.CommandError:
+            self.finished.emit(None, "Aperture photometry requires Siril 1.4.0 or later.\nPlease use PSF Fitting method or update Siril.", None)
+            return
+        
+        self.progress_update.emit("Querying Gaia DR3...", 10)
+        
+        gaia_results = self.query_gaia_field()
+        
+        if gaia_results is None or len(gaia_results) == 0:
+            self.finished.emit(None, "No Gaia stars found in field", None)
+            return
+        
+        self.progress_update.emit("Performing aperture photometry on Gaia stars...", 30)
+        
+        star_data = self.perform_psf_photometry_on_gaia_stars(gaia_results)
+        
+        if len(star_data) == 0:
+            self.finished.emit(None, "No valid aperture photometry measurements obtained", None)
+            return
+        
+        self.progress_update.emit("Calibrating photometry...", 90)
+        
+        # Calculate photometric calibration with linear regression
+        mag_zp, color_slope, color_intercept, calib_stats = calculate_zero_points(star_data)
+        
+        # Apply calibration to all stars
+        for star in star_data:
+            img_color = calculate_color_index(star)
+            if img_color is not None:
+                # Transform to BP-RP equivalent using linear regression
+                star['img_color'] = color_slope * img_color + color_intercept
+                star['img_color_raw'] = img_color  # Keep original for reference
+            else:
+                star['img_color'] = None
+                star['img_color_raw'] = None
+            
+            if 'img_mag_g' in star:
+                star['img_mag_calib'] = star['img_mag_g'] + mag_zp
+            else:
+                star['img_mag_calib'] = None
+        
+        self.progress_update.emit("Complete", 100)
+        self.finished.emit(star_data, None, calib_stats)
+    
     def detect_image_stars(self):
         """Detect stars in the image using Siril's star detection"""
         try:
-            print("\n=== STAR DETECTION ===")
+            print("\n=== STAR DETECTION (FINDSTAR) ===")
             
             # Check if image is color
             fit = self.siril.get_image()
@@ -380,6 +529,163 @@ class GaiaQueryWorker(QObject):
             import traceback
             traceback.print_exc()
             return None
+    
+    def perform_psf_photometry_on_gaia_stars(self, gaia_results):
+        """Perform aperture photometry on Gaia star positions"""
+        try:
+            print("\n=== APERTURE PHOTOMETRY ON GAIA POSITIONS ===")
+            
+            # Check if image is color
+            fit = self.siril.get_image()
+            if fit.data.ndim != 3:
+                print("✗ Error: Image must be a color (RGB) image")
+                return []
+            
+            n_channels, height, width = fit.data.shape
+            
+            print(f"Image dimensions: {width}x{height}, channels: {n_channels}")
+            print(f"Processing {len(gaia_results)} Gaia stars...")
+            
+            star_data = []
+            box_size = 50  # Size of the box around each star (in pixels)
+            
+            successful = 0
+            out_of_bounds = 0
+            psf_failed = 0
+            no_measurement = 0
+            
+            for i, gaia_star in enumerate(gaia_results):
+                if i % 50 == 0:
+                    progress = int(30 + (i / len(gaia_results)) * 60)
+                    self.progress_update.emit(f"Aperture photometry ({successful} done)", progress)
+                
+                try:
+                    # Convert RA/Dec to pixel coordinates
+                    x, y = self.siril.radec2pix(gaia_star['ra'], gaia_star['dec'])
+                    
+                    # Check bounds with margins for box_size
+                    margin = box_size // 2 + 5
+                    if x < margin or x >= width - margin or y < margin or y >= height - margin:
+                        out_of_bounds += 1
+                        continue
+                    
+                    # Calculate box coordinates (centered on star)
+                    box_x = int(x - box_size // 2)
+                    box_y = int(y - box_size // 2)
+                    box_width = box_size
+                    box_height = box_size
+                    
+                    # Perform PSF on each channel using get_selection_star with shape parameter
+                    psf_results = {}
+                    shape = [box_x, box_y, box_width, box_height]
+                    
+                    for channel in [0, 1, 2]:  # R, G, B
+                        try:
+                            # Get PSF star directly with shape parameter
+                            psf_star = self.siril.get_selection_star(assume_centred=True, shape=shape, channel=channel)
+                            
+                            # Check if we got a valid measurement
+                            if psf_star is None:
+                                continue
+                            
+                            # Validate - check reasonable values
+                            if psf_star.mag < 50.0 and psf_star.SNR > 0:
+                                psf_results[channel] = psf_star
+                            
+                        except Exception as e:
+                            continue
+                    
+                    # Check if we have measurements for at least 2 channels (needed for color)
+                    if len(psf_results) < 2:
+                        if len(psf_results) == 0:
+                            no_measurement += 1
+                        else:
+                            psf_failed += 1
+                        continue
+                    
+                    # Use green channel as reference (or first available)
+                    reference_channel = 1 if 1 in psf_results else list(psf_results.keys())[0]
+                    reference_psf = psf_results[reference_channel]
+                    
+                    # Apply max magnitude filter if set
+                    if self.max_img_mag > 0 and reference_psf.mag > self.max_img_mag:
+                        continue
+                    
+                    # Calculate Gaia-derived values
+                    color = float(gaia_star['phot_bp_mean_mag'] - gaia_star['phot_rp_mean_mag'])
+                    
+                    parallax = gaia_star['parallax']
+                    if parallax is not None and not np.ma.is_masked(parallax) and parallax > 0:
+                        distance_pc = 1000.0 / parallax
+                        distance_ly = distance_pc * 3.262
+                        abs_mag = gaia_star['phot_g_mean_mag'] - 5 * np.log10(distance_pc / 10.0)
+                    else:
+                        distance_ly = 0
+                        abs_mag = None
+                    
+                    pmra = gaia_star['pmra']
+                    pmra_val = float(pmra) if (pmra is not None and not np.ma.is_masked(pmra)) else 0.0
+                    
+                    pmdec = gaia_star['pmdec']
+                    pmdec_val = float(pmdec) if (pmdec is not None and not np.ma.is_masked(pmdec)) else 0.0
+                    
+                    # Build star data dictionary
+                    matched_star = {
+                        'source_id': int(gaia_star['source_id']),
+                        'x': float(reference_psf.xpos),
+                        'y': float(reference_psf.ypos),
+                        'ra': float(gaia_star['ra']),
+                        'dec': float(gaia_star['dec']),
+                        'parallax': float(parallax) if (parallax is not None and not np.ma.is_masked(parallax)) else 0.0,
+                        'pmra': pmra_val,
+                        'pmdec': pmdec_val,
+                        'g_mag': float(gaia_star['phot_g_mean_mag']),
+                        'bp_mag': float(gaia_star['phot_bp_mean_mag']),
+                        'rp_mag': float(gaia_star['phot_rp_mean_mag']),
+                        'color': color,
+                        'abs_mag': float(abs_mag) if abs_mag is not None else None,
+                        'distance': float(distance_ly),
+                        'fwhm': float((reference_psf.fwhmx_arcsec + reference_psf.fwhmy_arcsec) / 2.0),
+                        'snr': float(reference_psf.SNR)
+                    }
+                    
+                    # Store magnitudes from each channel
+                    if 0 in psf_results:
+                        matched_star['img_mag_r'] = float(psf_results[0].mag)
+                    if 1 in psf_results:
+                        matched_star['img_mag_g'] = float(psf_results[1].mag)
+                    if 2 in psf_results:
+                        matched_star['img_mag_b'] = float(psf_results[2].mag)
+                    
+                    star_data.append(matched_star)
+                    successful += 1
+                    
+                except Exception as e:
+                    continue
+            
+            print(f"\n=== APERTURE PHOTOMETRY RESULTS ===")
+            print(f"Successfully processed: {len(star_data)} stars")
+            print(f"Out of bounds: {out_of_bounds}")
+            print(f"No valid measurement: {no_measurement}")
+            print(f"PSF failed (partial): {psf_failed}")
+            print(f"Total Gaia stars: {len(gaia_results)}")
+            
+            if len(star_data) == 0:
+                print("\n⚠️ WARNING: No aperture photometry measurements obtained!")
+                print("Possible issues:")
+                print("1. Stars may be too faint or saturated")
+                print("2. Image quality may be poor")
+                print("3. Astrometric solution may be inaccurate")
+            elif len(star_data) < 10:
+                print(f"\n⚠️ WARNING: Very few measurements ({len(star_data)})!")
+            
+            return star_data
+            
+        except Exception as e:
+            print(f"Error in aperture photometry: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
     
     def query_gaia_field(self):
         """Query Gaia DR3 for stars in the field"""
@@ -597,6 +903,7 @@ class HRDiagramCanvas(FigureCanvas):
         self.use_absolute_mag = True
         self.show_reference = True
         self.scatter = None
+        self.colorbar = None
         self.color_slope = 1.0
         self.color_intercept = 0.0
         
@@ -643,7 +950,6 @@ class HRDiagramCanvas(FigureCanvas):
         
         colors = []
         mags = []
-        point_colors = []
         point_sizes = []
         
         for star in star_data:
@@ -666,18 +972,6 @@ class HRDiagramCanvas(FigureCanvas):
             colors.append(color)
             mags.append(mag)
             
-            # Color-code by BP-RP temperature
-            if color < 0.5:
-                point_colors.append('#4da6ff')
-            elif color < 1.0:
-                point_colors.append('#ffffff')
-            elif color < 1.5:
-                point_colors.append('#ffff99')
-            elif color < 2.5:
-                point_colors.append('#ff9933')
-            else:
-                point_colors.append('#ff3333')
-            
             size = 8
             point_sizes.append(size)
         
@@ -688,9 +982,23 @@ class HRDiagramCanvas(FigureCanvas):
             self.draw()
             return
         
-        self.scatter = self.ax.scatter(colors, mags, c=point_colors, 
+        # Use continuous colormap based on color (BP-RP)
+        # RdYlBu_r goes from red (hot/blue stars) to blue (cool/red stars)
+        # We reverse it so blue colors represent blue/hot stars
+        self.scatter = self.ax.scatter(colors, mags, c=colors, 
+                                      cmap='RdYlBu_r',
                                       s=point_sizes, alpha=0.7, 
-                                      picker=True, zorder=3)
+                                      picker=True, zorder=3,
+                                      vmin=-0.5, vmax=4.0)
+        
+        # Add or update colorbar
+        if self.colorbar is None:
+            self.colorbar = self.fig.colorbar(self.scatter, ax=self.ax, pad=0.02)
+            self.colorbar.set_label('Color Index', rotation=270, labelpad=20, color='white')
+            self.colorbar.ax.tick_params(colors='white')
+        else:
+            # Update existing colorbar
+            self.colorbar.update_normal(self.scatter)
         
         # Labels
         self.ax.set_xlabel('Color Index', color='white', fontsize=12)
@@ -799,6 +1107,118 @@ class HRDiagramCanvas(FigureCanvas):
             self.point_clicked.emit(actual_idx)
 
 # ============================================================================
+# Gaia Parameters Dialog
+# ============================================================================
+
+class GaiaParametersDialog(QDialog):
+    """Dialog for configuring Gaia query parameters"""
+    
+    def __init__(self, parent, min_mag, max_mag, max_stars, max_img_mag):
+        super().__init__(parent)
+        self.setWindowTitle("Gaia Query Parameters")
+        
+        # Main layout
+        main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(20)
+        main_layout.setContentsMargins(25, 20, 25, 20)
+        
+        # Title
+        title_label = QLabel("<h3>Configure Gaia DR3 Query</h3>")
+        main_layout.addWidget(title_label)
+        
+        # Magnitude range group
+        mag_group = QGroupBox("Magnitude Range")
+        mag_layout = QVBoxLayout(mag_group)
+        mag_layout.setSpacing(10)
+        
+        # Min magnitude
+        min_mag_layout = QHBoxLayout()
+        min_label = QLabel("Minimum:")
+        min_label.setMinimumWidth(100)
+        min_mag_layout.addWidget(min_label)
+        self.min_mag_spin = QDoubleSpinBox()
+        self.min_mag_spin.setRange(0.0, 20.0)
+        self.min_mag_spin.setValue(min_mag)
+        self.min_mag_spin.setSingleStep(0.5)
+        self.min_mag_spin.setMinimumWidth(100)
+        self.min_mag_spin.setToolTip("Minimum Gaia magnitude to query.\nBrighter stars have lower magnitudes.")
+        min_mag_layout.addWidget(self.min_mag_spin)
+        min_mag_layout.addStretch()
+        mag_layout.addLayout(min_mag_layout)
+        
+        # Max magnitude
+        max_mag_layout = QHBoxLayout()
+        max_label = QLabel("Maximum:")
+        max_label.setMinimumWidth(100)
+        max_mag_layout.addWidget(max_label)
+        self.max_mag_spin = QDoubleSpinBox()
+        self.max_mag_spin.setRange(0.0, 20.0)
+        self.max_mag_spin.setValue(max_mag)
+        self.max_mag_spin.setSingleStep(0.5)
+        self.max_mag_spin.setMinimumWidth(100)
+        self.max_mag_spin.setToolTip("Maximum Gaia magnitude to query.\nFainter stars have higher magnitudes.")
+        max_mag_layout.addWidget(self.max_mag_spin)
+        max_mag_layout.addStretch()
+        mag_layout.addLayout(max_mag_layout)
+        
+        main_layout.addWidget(mag_group)
+        
+        # Query limits group
+        limits_group = QGroupBox("Query Limits")
+        limits_layout = QVBoxLayout(limits_group)
+        limits_layout.setSpacing(10)
+        
+        # Max stars
+        max_stars_layout = QHBoxLayout()
+        max_stars_label = QLabel("Maximum Stars:")
+        max_stars_label.setMinimumWidth(100)
+        max_stars_layout.addWidget(max_stars_label)
+        self.max_stars_spin = QSpinBox()
+        self.max_stars_spin.setRange(100, 10000)
+        self.max_stars_spin.setValue(max_stars)
+        self.max_stars_spin.setSingleStep(100)
+        self.max_stars_spin.setMinimumWidth(100)
+        self.max_stars_spin.setToolTip("Maximum number of stars to query from Gaia.\nHigher values take longer but provide more data.")
+        max_stars_layout.addWidget(self.max_stars_spin)
+        max_stars_layout.addStretch()
+        limits_layout.addLayout(max_stars_layout)
+        
+        # Max image magnitude
+        max_img_mag_layout = QHBoxLayout()
+        max_img_mag_label = QLabel("Max Image Mag:")
+        max_img_mag_label.setMinimumWidth(100)
+        max_img_mag_layout.addWidget(max_img_mag_label)
+        self.max_img_mag_spin = QDoubleSpinBox()
+        self.max_img_mag_spin.setRange(0.0, 25.0)
+        self.max_img_mag_spin.setValue(max_img_mag)
+        self.max_img_mag_spin.setSingleStep(0.5)
+        self.max_img_mag_spin.setMinimumWidth(100)
+        self.max_img_mag_spin.setSpecialValueText("No limit")
+        self.max_img_mag_spin.setToolTip("Maximum instrumental magnitude from image.\nSet to 0 for no limit. Use to filter out faint/noisy stars.")
+        max_img_mag_layout.addWidget(self.max_img_mag_spin)
+        max_img_mag_layout.addStretch()
+        limits_layout.addLayout(max_img_mag_layout)
+        
+        main_layout.addWidget(limits_group)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        button_layout.addWidget(cancel_btn)
+        
+        ok_btn = QPushButton("OK")
+        ok_btn.setDefault(True)
+        ok_btn.clicked.connect(self.accept)
+        button_layout.addWidget(ok_btn)
+        
+        main_layout.addLayout(button_layout)
+        
+        self.setFixedSize(self.sizeHint())
+
+# ============================================================================
 # Main Dialog
 # ============================================================================
 
@@ -808,11 +1228,17 @@ class HRDiagramDialog(QMainWindow):
     def __init__(self, siril):
         super().__init__()
         self.setWindowTitle(f"Hertzsprung-Russell Diagram v{VERSION}")
-        self.resize(1400, 800)
+        self.resize(1400, 650)
         
         self.siril = siril
         self.star_data = None
         self.calib_stats = None
+        
+        # Gaia query parameters (stored here, configured via dialog)
+        self.min_mag = 6.0
+        self.max_mag = 18.0
+        self.max_stars = 5000
+        self.max_img_mag = 0.0
         
         if not self.siril.is_image_loaded():
             QMessageBox.critical(self, "Error", "No image loaded in Siril")
@@ -870,55 +1296,31 @@ class HRDiagramDialog(QMainWindow):
         version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(version_label)
         
-        query_group = QGroupBox("Gaia Query Parameters")
-        query_layout = QVBoxLayout(query_group)
+        # Photometry method selection
+        method_group = QGroupBox("Photometry Method")
+        method_layout = QVBoxLayout(method_group)
         
-        min_mag_layout = QHBoxLayout()
-        min_mag_layout.addWidget(QLabel("Min Gaia Mag:"))
-        self.min_mag_spin = QDoubleSpinBox()
-        self.min_mag_spin.setRange(0.0, 20.0)
-        self.min_mag_spin.setValue(6.0)
-        self.min_mag_spin.setSingleStep(0.5)
-        self.min_mag_spin.setToolTip("Minimum Gaia magnitude to query.\nBrighter stars have lower magnitudes.")
-        min_mag_layout.addWidget(self.min_mag_spin)
-        min_mag_layout.addStretch()
-        query_layout.addLayout(min_mag_layout)
+        method_label = QLabel("Analysis method:")
+        method_layout.addWidget(method_label)
         
-        max_mag_layout = QHBoxLayout()
-        max_mag_layout.addWidget(QLabel("Max Gaia Mag:"))
-        self.max_mag_spin = QDoubleSpinBox()
-        self.max_mag_spin.setRange(0.0, 20.0)
-        self.max_mag_spin.setValue(18.0)
-        self.max_mag_spin.setSingleStep(0.5)
-        self.max_mag_spin.setToolTip("Maximum Gaia magnitude to query.\nFainter stars have higher magnitudes.")
-        max_mag_layout.addWidget(self.max_mag_spin)
-        max_mag_layout.addStretch()
-        query_layout.addLayout(max_mag_layout)
+        self.method_combo = QComboBox()
+        self.method_combo.addItem("PSF Fitting (findstar)", "findstar")
+        self.method_combo.addItem("Aperture Photometry", "gaia_positions")
+        self.method_combo.setToolTip(
+            "PSF Fitting: Faster method using PSF model fitting on detected stars.\n"
+            "May be less precise but covers more of the field.\n\n"
+            "Aperture Photometry: Direct flux measurement on Gaia positions.\n"
+            "More precise but may reject edge stars and saturated stars (very blue/red)."
+        )
+        method_layout.addWidget(self.method_combo)
         
-        max_stars_layout = QHBoxLayout()
-        max_stars_layout.addWidget(QLabel("Max Stars:"))
-        self.max_stars_spin = QSpinBox()
-        self.max_stars_spin.setRange(100, 10000)
-        self.max_stars_spin.setValue(5000)
-        self.max_stars_spin.setSingleStep(100)
-        self.max_stars_spin.setToolTip("Maximum number of stars to query from Gaia.\nHigher values take longer but provide more data.")
-        max_stars_layout.addWidget(self.max_stars_spin)
-        max_stars_layout.addStretch()
-        query_layout.addLayout(max_stars_layout)
+        layout.addWidget(method_group)
         
-        max_img_mag_layout = QHBoxLayout()
-        max_img_mag_layout.addWidget(QLabel("Max Image Mag:"))
-        self.max_img_mag_spin = QDoubleSpinBox()
-        self.max_img_mag_spin.setRange(0.0, 25.0)
-        self.max_img_mag_spin.setValue(0.0)
-        self.max_img_mag_spin.setSingleStep(0.5)
-        self.max_img_mag_spin.setSpecialValueText("No limit")
-        self.max_img_mag_spin.setToolTip("Maximum instrumental magnitude from image.\nSet to 0 for no limit. Use to filter out faint/noisy stars.")
-        max_img_mag_layout.addWidget(self.max_img_mag_spin)
-        max_img_mag_layout.addStretch()
-        query_layout.addLayout(max_img_mag_layout)
-        
-        layout.addWidget(query_group)
+        # Gaia query parameters button
+        self.btn_gaia_params = QPushButton("Configure Gaia Query...")
+        self.btn_gaia_params.setToolTip("Configure Gaia DR3 query parameters:\nMagnitude range, maximum stars, filtering options")
+        self.btn_gaia_params.clicked.connect(self.open_gaia_parameters)
+        layout.addWidget(self.btn_gaia_params)
         
         display_group = QGroupBox("Display Options")
         display_layout = QVBoxLayout(display_group)
@@ -937,10 +1339,10 @@ class HRDiagramDialog(QMainWindow):
         
         layout.addWidget(display_group)
         
-        btn_generate = QPushButton("Generate HR Diagram")
-        btn_generate.setToolTip("Start star detection, Gaia query, and HR diagram generation.\nThis may take a few minutes depending on the number of stars.")
-        btn_generate.clicked.connect(self.start_processing)
-        layout.addWidget(btn_generate)
+        self.btn_generate = QPushButton("Generate HR Diagram")
+        self.btn_generate.setToolTip("Start Gaia query and photometry (PSF fitting or aperture), then generate HR diagram.\nThis may take a few minutes depending on the number of stars and selected method.")
+        self.btn_generate.clicked.connect(self.start_processing)
+        layout.addWidget(self.btn_generate)
         
         progress_group = QGroupBox("Progress")
         progress_layout = QVBoxLayout(progress_group)
@@ -981,9 +1383,10 @@ class HRDiagramDialog(QMainWindow):
             "<b>Instructions:</b><br>"
             "1. Ensure image has an astrometric solution<br>"
             "2. Ensure SPCC has been applied on the image<br>"
-            "3. Adjust Gaia query parameters if needed<br>"
-            "4. Click 'Generate HR Diagram'<br>"
-            "5. Click points on the diagram to see details<br>"
+            "3. Select photometry method<br>"
+            "4. Configure Gaia query if needed (button above)<br>"
+            "5. Click 'Generate HR Diagram'<br>"
+            "6. Click points on the diagram to see details<br>"
             "<br>"
             "<b>Note:</b> Uses B-R color index (Blue minus Red)"
         )
@@ -995,18 +1398,31 @@ class HRDiagramDialog(QMainWindow):
     def create_right_panel(self):
         right_widget = QWidget()
         layout = QVBoxLayout(right_widget)
-        
+    
         self.hr_canvas = HRDiagramCanvas()
         self.hr_canvas.point_clicked.connect(self.show_star_details)
-        
-        toolbar = NavigationToolbar(self.hr_canvas, self)
-        layout.addWidget(toolbar)
+    
+        # Use custom toolbar with CSV export
+        self.toolbar = CustomNavigationToolbar(self.hr_canvas, self, lambda: self.star_data)
+        layout.addWidget(self.toolbar)
         layout.addWidget(self.hr_canvas)
-        
+    
         return right_widget
     
+    def open_gaia_parameters(self):
+        """Open dialog to configure Gaia query parameters"""
+        dialog = GaiaParametersDialog(self, self.min_mag, self.max_mag, 
+                                     self.max_stars, self.max_img_mag)
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Save the values
+            self.min_mag = dialog.min_mag_spin.value()
+            self.max_mag = dialog.max_mag_spin.value()
+            self.max_stars = dialog.max_stars_spin.value()
+            self.max_img_mag = dialog.max_img_mag_spin.value()
+    
     def start_processing(self):
-        """Start the Gaia query and star matching process"""
+        """Start the Gaia query and photometry process"""
         # Check if SPCC has been applied
         try:
             history = self.siril.get_image_history()
@@ -1035,16 +1451,23 @@ class HRDiagramDialog(QMainWindow):
             # If we can't check history, just continue with a warning
             print(f"Warning: Could not verify SPCC application: {e}")
         
+        # Disable controls during processing
+        self.btn_generate.setEnabled(False)
+        self.btn_gaia_params.setEnabled(False)
+        self.method_combo.setEnabled(False)
+        
         self.status_label.setText("Starting...")
         self.progress_bar.setValue(0)
         
-        min_mag = self.min_mag_spin.value()
-        max_mag = self.max_mag_spin.value()
-        max_stars = self.max_stars_spin.value()
-        max_img_mag = self.max_img_mag_spin.value()
+        min_mag = self.min_mag
+        max_mag = self.max_mag
+        max_stars = self.max_stars
+        max_img_mag = self.max_img_mag
+        photometry_method = self.method_combo.currentData()
         
         self.thread = QThread(self)
-        self.worker = GaiaQueryWorker(self.siril, min_mag, max_mag, max_stars, max_img_mag)
+        self.worker = GaiaQueryWorker(self.siril, min_mag, max_mag, max_stars, 
+                                     max_img_mag, photometry_method)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.progress_update.connect(self.on_progress)
@@ -1059,15 +1482,23 @@ class HRDiagramDialog(QMainWindow):
         self.progress_bar.setValue(percent)
     
     def on_finished(self, star_data, error, calib_stats):
+        # Re-enable controls
+        self.btn_generate.setEnabled(True)
+        self.btn_gaia_params.setEnabled(True)
+        self.method_combo.setEnabled(True)
+        
         if error:
             self.status_label.setText("Error")
             self.progress_bar.setValue(0)
             QMessageBox.warning(self, "Processing Error", error)
             return
-        
+    
         if star_data:
             self.star_data = star_data
             self.calib_stats = calib_stats
+        
+            # Enable CSV export in toolbar
+            self.toolbar.enable_export(True)
             
             n_with_parallax = sum(1 for s in star_data if s['parallax'] > 0)
             n_with_img_phot = sum(1 for s in star_data if s.get('img_color') is not None)
@@ -1102,11 +1533,12 @@ class HRDiagramDialog(QMainWindow):
             self.status_label.setText(f"Complete - {len(star_data)} stars processed")
             self.progress_bar.setValue(100)
             
+            method_name = "PSF fitting" if self.method_combo.currentData() == 'findstar' else "Aperture photometry"
             if n_with_img_phot > 0:
-                self.siril.log(f"HR Diagram: {n_with_img_phot} stars with calibrated image photometry", 
+                self.siril.log(f"HR Diagram ({method_name}): {n_with_img_phot} stars with calibrated photometry", 
                               color=s.LogColor.GREEN)
             else:
-                self.siril.log(f"HR Diagram: {len(star_data)} stars plotted", 
+                self.siril.log(f"HR Diagram ({method_name}): {len(star_data)} stars plotted", 
                               color=s.LogColor.GREEN)
         else:
             self.status_label.setText("No data")
@@ -1154,7 +1586,7 @@ class HRDiagramDialog(QMainWindow):
         if star['abs_mag'] is not None:
             details += f"Absolute magnitude: {star['abs_mag']:.3f}<br>"
         
-        details += "<br><b>Image Photometry (PSF):</b><br>"
+        details += "<br><b>Image Photometry:</b><br>"
         
         if 'img_mag_r' in star:
             details += f"R: {star['img_mag_r']:.3f}<br>"
@@ -1199,6 +1631,11 @@ def main():
             app = QApplication(sys.argv)
             QMessageBox.critical(None, "Error", "Failed to connect to Siril")
             sys.exit(1)
+        
+        try:
+            siril.cmd("requires", "1.4.0-beta1")
+        except s.CommandError:
+            return
         
         if siril.is_cli():
             print("This script requires GUI mode")
