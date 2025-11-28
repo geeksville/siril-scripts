@@ -88,3 +88,12 @@ Together, we can make image processing more efficient and enjoyable.
 *Note: This README is subject to change as the repository evolves. Be sure to 
 check back for updates
 
+## License
+
+This repository is a collection of works by various authors.
+Each script or subdirectory contains its own license; if a file includes a license
+header, that license takes precedence.
+
+The repository-level MIT License applies only to material not explicitly licensed
+otherwise (e.g., documentation, scripts, and directory organization).
+
