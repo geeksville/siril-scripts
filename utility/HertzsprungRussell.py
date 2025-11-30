@@ -18,6 +18,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 # Version History
 # 1.0.0  Initial script release
 # 1.1.0  Added choice between two photometry methods and a way to export data
+# 1.1.1  Improved error handling and added fallback to partner Gaia archives
 
 import sirilpy as s
 s.ensure_installed('PyQt6')
@@ -46,10 +47,10 @@ import matplotlib.pyplot as plt
 from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
 import astropy.units as u
-from astroquery.gaia import Gaia
+# NOTE: We import Gaia only when needed to avoid connection attempts at startup
 import csv
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 
 if not s.check_module_version('>=0.6.42'):
     print("Error: requires sirilpy module >= 0.6.42")
@@ -688,7 +689,7 @@ class GaiaQueryWorker(QObject):
             return []
     
     def query_gaia_field(self):
-        """Query Gaia DR3 for stars in the field"""
+        """Query Gaia DR3 for stars in the field with fallback to partner archives"""
         try:
             channels, height, width = self.siril.get_image_shape()
             
@@ -700,8 +701,11 @@ class GaiaQueryWorker(QObject):
             delta_dec = max(abs(dec_center - dec_tl), abs(dec_center - dec_br))
             radius_deg = np.sqrt(delta_ra**2 + delta_dec**2)
             
-            print(f"Querying Gaia DR3 around RA={ra_center:.4f}°, Dec={dec_center:.4f}°")
+            print(f"\n=== GAIA DR3 QUERY ===")
+            print(f"Field center: RA={ra_center:.4f}°, Dec={dec_center:.4f}°")
             print(f"Search radius: {radius_deg:.4f}° ({radius_deg*60:.2f}′)")
+            print(f"Magnitude range: {self.min_mag} - {self.max_mag}")
+            print(f"Maximum stars: {self.max_stars}")
             
             query = f"""
             SELECT TOP {self.max_stars}
@@ -724,18 +728,228 @@ class GaiaQueryWorker(QObject):
             ORDER BY phot_g_mean_mag ASC
             """
             
-            print("Executing Gaia query (this may take a moment)...")
+            # Try ESA archive first
+            print("\n[1/2] Trying ESA Gaia Archive (primary)...")
+            results = self._try_query_esa(query)
+            if results is not None:
+                print(f"✓ Successfully retrieved {len(results)} stars from ESA archive")
+                self.siril.log("HR Diagram: Using ESA Gaia Archive", color=s.LogColor.GREEN)
+                return results
             
-            with s.SuppressedStdout():
-                job = Gaia.launch_job_async(query)
-                results = job.get_results()
+            # Fallback to VizieR/CDS (France)
+            print("\n[2/2] Trying VizieR/CDS (France)...")
+            self.siril.log("HR Diagram: ESA archive unavailable, trying VizieR/CDS partner archive...", 
+                          color=s.LogColor.BLUE)
+            results = self._try_query_vizier()
+            if results is not None:
+                print(f"✓ Successfully retrieved {len(results)} stars from VizieR/CDS")
+                self.siril.log("HR Diagram: Successfully using VizieR/CDS (France) partner archive", 
+                              color=s.LogColor.GREEN)
+                return results
             
-            print(f"Found {len(results)} stars in Gaia DR3")
+            # All attempts failed
+            print("\n✗ All Gaia archive attempts failed")
+            print("\nPossible solutions:")
+            print("1. Check your internet connection")
+            print("2. Wait a few minutes if archives are under maintenance")
+            print("3. Visit https://gea.esac.esa.int/archive/ for status")
+            print("4. Try VizieR manually: http://tapvizier.u-strasbg.fr/adql/")
             
-            return results
+            self.siril.log("HR Diagram: All Gaia archives failed - check internet connection", 
+                          color=s.LogColor.RED)
+            
+            return None
             
         except Exception as e:
-            print(f"Error querying Gaia: {e}")
+            print(f"\n✗ Unexpected error in Gaia query: {e}")
+            import traceback
+            traceback.print_exc()
+            self.siril.log(f"HR Diagram: Query error - {str(e)[:100]}", color=s.LogColor.RED)
+            return None
+    
+    def _try_query_esa(self, query):
+        """Try querying ESA Gaia Archive (primary)"""
+        try:
+            # Import Gaia here to avoid connection attempts at module load time
+            # Suppress output during import to avoid HTML spam from maintenance page
+            import sys
+            import io
+            
+            # Show query parameters (matching VizieR output)
+            channels, height, width = self.siril.get_image_shape()
+            ra_center, dec_center = self.siril.pix2radec(width / 2, height / 2)
+            ra_tl, dec_tl = self.siril.pix2radec(0, 0)
+            ra_br, dec_br = self.siril.pix2radec(width, height)
+            delta_ra = max(abs(ra_center - ra_tl), abs(ra_center - ra_br))
+            delta_dec = max(abs(dec_center - dec_tl), abs(dec_center - dec_br))
+            radius_deg = np.sqrt(delta_ra**2 + delta_dec**2)
+            
+            print(f"  Using cone search: radius={radius_deg:.4f}°")
+            print(f"  Magnitude filter: {self.min_mag} - {self.max_mag}")
+            print(f"  Querying ESA Gaia Archive...")
+            
+            old_stdout = sys.stdout
+            old_stderr = sys.stderr
+            sys.stdout = io.StringIO()
+            sys.stderr = io.StringIO()
+            
+            try:
+                from astroquery.gaia import Gaia
+                
+                job = Gaia.launch_job_async(query)
+                results = job.get_results()
+                
+                # Restore output
+                sys.stdout = old_stdout
+                sys.stderr = old_stderr
+                
+                return results
+                
+            except Exception as inner_e:
+                # Restore output before handling error
+                captured_stdout = sys.stdout.getvalue()
+                captured_stderr = sys.stderr.getvalue()
+                sys.stdout = old_stdout
+                sys.stderr = old_stderr
+                
+                # Check if it's a maintenance page (contains HTML)
+                combined_output = captured_stdout + captured_stderr + str(inner_e)
+                
+                if 'maintenance' in combined_output.lower() or 'Archive down for maintenance' in combined_output:
+                    print("  ⚠ ESA Gaia Archive is currently under maintenance")
+                    return None
+                
+                # Re-raise to be handled by outer except
+                raise inner_e
+                
+        except Exception as e:
+            error_str = str(e).lower()
+            # Check for various error conditions
+            if 'maintenance' in error_str:
+                print("  ⚠ ESA archive is under maintenance")
+            elif 'timeout' in error_str or 'timed out' in error_str:
+                print("  ⚠ ESA archive connection timeout")
+            elif 'connection' in error_str or 'connect' in error_str:
+                print("  ⚠ Cannot connect to ESA archive")
+            elif '404' in str(e) or 'not found' in error_str:
+                print("  ⚠ ESA archive service unavailable (likely maintenance)")
+            elif '503' in str(e) or 'service unavailable' in error_str:
+                print("  ⚠ ESA archive service temporarily unavailable")
+            elif 'http' in error_str and 'error' in error_str:
+                print(f"  ⚠ ESA archive HTTP error: {str(e)[:80]}")
+            else:
+                # For debugging - but truncate to avoid spam
+                error_msg = str(e)[:150]
+                # Don't print if it looks like HTML
+                if '<' not in error_msg or 'html' not in error_msg.lower():
+                    print(f"  ⚠ ESA archive error: {error_msg}")
+                else:
+                    print("  ⚠ ESA archive returned invalid response (possibly maintenance)")
+            return None
+    
+    def _try_query_vizier(self):
+        """Try querying VizieR/CDS (French partner archive)"""
+        try:
+            # CDS/VizieR approach - simpler and more reliable
+            from astroquery.vizier import Vizier
+            from astropy.coordinates import SkyCoord
+            import astropy.units as u
+            
+            # Extract parameters from the original query
+            # We need to get ra_center, dec_center, radius from self
+            channels, height, width = self.siril.get_image_shape()
+            ra_center, dec_center = self.siril.pix2radec(width / 2, height / 2)
+            ra_tl, dec_tl = self.siril.pix2radec(0, 0)
+            ra_br, dec_br = self.siril.pix2radec(width, height)
+            
+            delta_ra = max(abs(ra_center - ra_tl), abs(ra_center - ra_br))
+            delta_dec = max(abs(dec_center - dec_tl), abs(dec_center - dec_br))
+            radius_deg = np.sqrt(delta_ra**2 + delta_dec**2)
+            
+            # Configure Vizier - start with reasonable limit to avoid huge downloads
+            # We'll filter by magnitude which should reduce the number significantly
+            print(f"  Using cone search: radius={radius_deg:.4f}°")
+            print(f"  Magnitude filter: {self.min_mag} - {self.max_mag}")
+            
+            # Use magnitude-based column filtering to reduce download size
+            # Request only stars in our magnitude range
+            v = Vizier(
+                columns=['Source', 'RA_ICRS', 'DE_ICRS', 'Plx', 'pmRA', 'pmDE',
+                        'Gmag', 'BPmag', 'RPmag'],
+                column_filters={'Gmag': f'{self.min_mag}..{self.max_mag}'},
+                row_limit=-1  # Unlimited within magnitude filter
+            )
+            
+            # Create coordinate for cone search
+            coord = SkyCoord(ra=ra_center, dec=dec_center, unit=(u.deg, u.deg), frame='icrs')
+            
+            print(f"  Querying VizieR with magnitude filter...")
+            
+            with s.SuppressedStdout():
+                # Query Gaia DR3 catalog from VizieR (I/355/gaiadr3)
+                result = v.query_region(coord, radius=radius_deg*u.deg, catalog='I/355/gaiadr3')
+            
+            if not result or len(result) == 0:
+                print("  ⚠ No results from VizieR")
+                return None
+            
+            # VizieR returns a TableList, get the first (and should be only) table
+            gaia_table = result[0]
+            
+            print(f"  Retrieved {len(gaia_table)} stars from VizieR (magnitude filtered)")
+            
+            # CRITICAL: Filter out rows with masked (missing) photometry BEFORE proceeding
+            # This prevents NaN issues in calibration
+            valid_mask = (~gaia_table['Gmag'].mask & 
+                         ~gaia_table['BPmag'].mask & 
+                         ~gaia_table['RPmag'].mask)
+            
+            initial_count = len(gaia_table)
+            gaia_table = gaia_table[valid_mask]
+            filtered_count = initial_count - len(gaia_table)
+            
+            if filtered_count > 0:
+                print(f"  Filtered {filtered_count} stars with missing photometry")
+            
+            if len(gaia_table) == 0:
+                print("  ⚠ No stars with complete photometry after filtering")
+                return None
+            
+            # Sort by magnitude (brightest first) to match ESA query behavior
+            gaia_table.sort('Gmag')
+            
+            # Limit to max_stars (matching ESA TOP clause)
+            if len(gaia_table) > self.max_stars:
+                print(f"  Limiting to {self.max_stars} brightest stars")
+                gaia_table = gaia_table[:self.max_stars]
+            
+            # Rename columns to match expected format
+            gaia_table.rename_column('Source', 'source_id')
+            gaia_table.rename_column('RA_ICRS', 'ra')
+            gaia_table.rename_column('DE_ICRS', 'dec')
+            gaia_table.rename_column('Plx', 'parallax')
+            gaia_table.rename_column('Gmag', 'phot_g_mean_mag')
+            gaia_table.rename_column('BPmag', 'phot_bp_mean_mag')
+            gaia_table.rename_column('RPmag', 'phot_rp_mean_mag')
+            
+            # VizieR column names for proper motion
+            if 'pmRA' in gaia_table.colnames:
+                gaia_table.rename_column('pmRA', 'pmra')
+            if 'pmDE' in gaia_table.colnames:
+                gaia_table.rename_column('pmDE', 'pmdec')
+            
+            print(f"  Final: {len(gaia_table)} stars with complete photometry")
+            
+            return gaia_table
+            
+        except Exception as e:
+            error_str = str(e).lower()
+            if 'timeout' in error_str or 'timed out' in error_str:
+                print("  ⚠ VizieR connection timeout")
+            elif 'connection' in error_str or 'connect' in error_str:
+                print("  ⚠ Cannot connect to VizieR")
+            else:
+                print(f"  ⚠ VizieR error: {str(e)[:150]}")
             return None
     
     def match_gaia_to_detected_stars(self, gaia_results, image_stars):
