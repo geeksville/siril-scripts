@@ -2,7 +2,7 @@
 # Siril Catalog Installer
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Version 2.2.0 - Refactored with VisPy sphere visualization
+# Version 2.2.2
 # Version history:
 # 1.0.0 Initial release
 # 1.0.1 Update SPCC DOI number to reflect fixed catalog
@@ -16,8 +16,9 @@
 # 2.1.0 Refactored with Qt OpenGL sphere visualization
 # 2.2.0 Refactored with VisPy sphere visualization
 # 2.2.1 Disable zooming (prevents visual glitches)
+# 2.2.2 Force X11 backend: PyOpenGL has problems on pure Wayland desktops
 
-VERSION = "2.2.1"
+VERSION = "2.2.2"
 
 # Catalog retrieval details
 ASTRO_RECORD = 14692304
@@ -1055,6 +1056,7 @@ def process_pixels(pixels, url_base, target_path):
 def main():
     """Main entry point"""
     try:
+        os.environ['QT_QPA_PLATFORM'] = 'xcb' # Force XWayland: Wayland doesn't seem to work with PyOpenGL
         app = QApplication(sys.argv)
         app.setStyle('Fusion')
         app.setApplicationName("Siril Catalog Installer")
