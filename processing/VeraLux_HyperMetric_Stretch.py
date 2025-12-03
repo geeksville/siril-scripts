@@ -7,7 +7,7 @@
 # (c) 2025 Riccardo Paterniti
 # VeraLux — HyperMetric Stretch
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Version 1.0.0
+# Version 1.0.1
 #
 # Credits / Origin
 # ----------------
@@ -59,7 +59,7 @@ Core Features
 Usage
 -----
 1. Pre-requisite: Image MUST be Linear and Color Calibrated (SPCC).
-2. Setup: Select your Sensor Profile (or Rec.709, recommended) and Processing Mode.
+2. Setup: Select your Sensor Profile (or Rec.709) and Processing Mode.
    (Default is "Ready-to-Use" for immediate results).
 3. Calibrate: Click Calculate Optimal Log D (Auto-Solver) to analyze the 
    linear data and find the mathematical sweet spot for the stretch.
@@ -96,9 +96,18 @@ focused on maximizing data fidelity through physics-based processing.
 import sys
 import os
 import traceback
-import sirilpy as s
-from sirilpy import LogColor
-s.ensure_installed("PyQt6")
+
+try:
+    import sirilpy as s
+    from sirilpy import LogColor
+except ImportError:
+    # Fallback for CLI testing or missing modules
+    print("Error: sirilpy module not found. This script must be run within Siril.")
+    sys.exit(1)
+
+# Ensure dependencies are present
+s.ensure_installed("PyQt6", "numpy")
+
 import numpy as np
 import math
 
@@ -117,18 +126,29 @@ QToolTip { background-color: #333333; color: #ffffff; border: 1px solid #88aaff;
 QGroupBox { border: 1px solid #444444; margin-top: 5px; font-weight: bold; border-radius: 4px; padding-top: 12px; }
 QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 3px; color: #88aaff; }
 QLabel { color: #cccccc; }
-QRadioButton { color: #cccccc; }
-QCheckBox { color: #cccccc; spacing: 5px; }
-QCheckBox::indicator { width: 13px; height: 13px; }
+
+/* Windows Fix: Explicitly style indicators to ensure visibility on custom dark backgrounds */
+QRadioButton, QCheckBox { color: #cccccc; spacing: 5px; }
+QRadioButton::indicator, QCheckBox::indicator { width: 14px; height: 14px; border: 1px solid #666666; background: #3c3c3c; border-radius: 7px; }
+QCheckBox::indicator { border-radius: 3px; }
+QRadioButton::indicator:checked { background-color: #285299; border: 1px solid #88aaff; image: none; }
+QCheckBox::indicator:checked { background-color: #285299; border: 1px solid #88aaff; image: none; }
+QRadioButton::indicator:checked { background: qradialgradient(cx:0.5, cy:0.5, radius: 0.4, fx:0.5, fy:0.5, stop:0 #ffffff, stop:1 #285299); }
+QCheckBox::indicator:checked { background: #285299; }
+
 QDoubleSpinBox { background-color: #3c3c3c; color: #ffffff; border: 1px solid #555555; padding: 3px; border-radius: 3px; }
 QComboBox { background-color: #3c3c3c; color: #ffffff; border: 1px solid #555555; padding: 3px; border-radius: 3px; }
 QComboBox:hover { border-color: #777777; }
 QComboBox::drop-down { border: none; width: 20px; }
 QComboBox::down-arrow { width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 6px solid #aaaaaa; margin-right: 6px; }
 QComboBox QAbstractItemView { background-color: #3c3c3c; color: #ffffff; selection-background-color: #285299; border: 1px solid #555555; }
+
+/* SLIDER FIX: Added min-height to prevent handle clipping */
+QSlider { min-height: 22px; }
 QSlider::groove:horizontal { background: #444444; height: 6px; border-radius: 3px; }
-QSlider::handle:horizontal { background: #aaaaaa; width: 14px; margin: -5px 0; border-radius: 7px; }
+QSlider::handle:horizontal { background: #aaaaaa; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; }
 QSlider::handle:horizontal:hover { background: #ffffff; }
+
 QPushButton { background-color: #444444; color: #dddddd; border: 1px solid #666666; border-radius: 4px; padding: 6px; font-weight: bold;}
 QPushButton:hover { background-color: #555555; border-color: #777777; }
 QPushButton#ProcessButton { background-color: #285299; border: 1px solid #1e3f7a; }
@@ -141,7 +161,7 @@ QProgressBar { border: 1px solid #555555; border-radius: 3px; text-align: center
 QProgressBar::chunk { background-color: #285299; width: 10px; }
 """
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 # =============================================================================
 #  WORKING SPACE PROFILES
@@ -456,14 +476,16 @@ class VeraLuxInterface:
         self.linear_cache = None
         self.window = QMainWindow()
         self.window.setWindowTitle(f"VeraLux v{VERSION}")
+        
+        self.app.setStyle("Fusion") 
         self.window.setStyleSheet(DARK_STYLESHEET)
-        self.window.setMinimumWidth(620) # WIDER to accommodate side-by-side
-        # Default flags set by toggle, so we start with standard + toggle logic
+        
+        self.window.setMinimumWidth(620) 
         self.window.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
         central = QWidget()
         self.window.setCentralWidget(central)
         layout = QVBoxLayout(central)
-        layout.setSpacing(8) # TIGHTER SPACING
+        layout.setSpacing(8) 
         
         # Header
         head = QLabel(f"VERALUX v{VERSION}\nPhotometric GHS Engine")
@@ -483,7 +505,7 @@ class VeraLuxInterface:
         grp_mode = QGroupBox("0. Processing Mode")
         l_mode = QVBoxLayout(grp_mode)
         
-        # Define Ready-to-Use FIRST
+        # Define Ready-to-Use
         self.radio_ready = QRadioButton("Ready-to-Use (Aesthetic)")
         self.radio_ready.setToolTip(
             "<b>Ready-to-Use Mode:</b><br>"
@@ -493,7 +515,7 @@ class VeraLuxInterface:
             "• Soft-clips highlights to reduce star blooming."
         )
         
-        # Define Scientific SECOND
+        # Define Scientific
         self.radio_scientific = QRadioButton("Scientific (Preserve)")
         self.radio_scientific.setToolTip(
             "<b>Scientific Mode:</b><br>"
@@ -521,11 +543,11 @@ class VeraLuxInterface:
         self.radio_ready.toggled.connect(self.update_mode_info)
         top_row.addWidget(grp_mode)
         
-        # 1. SENSOR CALIBRATION (Renamed)
+        # 1. SENSOR CALIBRATION
         grp_space = QGroupBox("1. Sensor Calibration")
         l_space = QVBoxLayout(grp_space)
         l_combo = QHBoxLayout()
-        l_combo.addWidget(QLabel("Sensor Profile:")) # Added Label Back for Clarity
+        l_combo.addWidget(QLabel("Sensor Profile:")) 
         self.combo_profile = QComboBox()
         self.combo_profile.setToolTip(
             "<b>Sensor Profile:</b><br>"
@@ -545,7 +567,7 @@ class VeraLuxInterface:
         
         layout.addLayout(top_row)
         
-        # --- 2. STRETCH ENGINE & CALIBRATION (Merged) ---
+        # --- 2. STRETCH ENGINE & CALIBRATION ---
         grp_combined = QGroupBox("2. Stretch Engine & Calibration")
         l_combined = QVBoxLayout(grp_combined)
         
@@ -581,7 +603,7 @@ class VeraLuxInterface:
         
         l_combined.addLayout(l_calib)
         
-        # Separator (Optional visual spacing)
+        # Separator
         l_combined.addSpacing(5)
         
         # B. MANUAL ENGINE SUB-SECTION
@@ -621,7 +643,7 @@ class VeraLuxInterface:
         
         layout.addWidget(grp_combined)
         
-        # 3. PHYSICS (Renumbered)
+        # 3. PHYSICS
         grp_phys = QGroupBox("3. Physics & Convergence")
         l_phys = QVBoxLayout(grp_phys)
         l_conv = QHBoxLayout()
@@ -786,6 +808,7 @@ def main():
         app.exec()
     except Exception as e:
         print(f"Error starting VeraLux: {e}")
+        # In case of CLI or other contexts, print trace
         traceback.print_exc()
 
 if __name__ == "__main__":
