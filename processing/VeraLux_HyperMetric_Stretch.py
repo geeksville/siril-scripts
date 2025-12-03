@@ -7,7 +7,7 @@
 # (c) 2025 Riccardo Paterniti
 # VeraLux — HyperMetric Stretch
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Version 1.0.1
+# Version 1.0.2
 #
 # Credits / Origin
 # ----------------
@@ -47,8 +47,8 @@ Core Features
   - Ready-to-Use Mode: Applies "Star-Safe" expansion, Linked MTF optimization, 
     and highlight soft-clipping. Delivers an aesthetic, export-ready image.
 • Hardware-Aware Color Science:
-  - Custom weighting profiles for IMX571, IMX662, and generic standards 
-    (Rec.709, ProPhoto) to match the stretching math to the sensor's QE.
+  - Extensive database of sensors with precise Quantum Efficiency weights
+    derived from Siril's SPCC database.
 • Star-Safe Expansion Engine:
   - Intelligent dynamic range analysis that distinguishes between diffuse nebulae 
     and stellar cores, preventing "bloating" on bright targets.
@@ -161,43 +161,154 @@ QProgressBar { border: 1px solid #555555; border-radius: 3px; text-align: center
 QProgressBar::chunk { background-color: #285299; width: 10px; }
 """
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
+# ------------------------------------------------------------------------------
+# VERSION HISTORY
+# ------------------------------------------------------------------------------
+# 1.0.2: Sensor DB update, based on Siril SPCC list and parameters.
+# 1.0.1: Fix Windows GUI artifacts (invisible checkboxes) and UI polish.
+# ------------------------------------------------------------------------------
+
 
 # =============================================================================
-#  WORKING SPACE PROFILES
+#  WORKING SPACE PROFILES (Database v2.1 - Siril SPCC Derived)
 # =============================================================================
 
 SENSOR_PROFILES = {
+    # --- STANDARD ---
     "Rec.709 (Recommended)": {
         'weights': (0.2126, 0.7152, 0.0722),
         'description': "ITU-R BT.709 standard for sRGB/HDTV",
-        'info': "Default choice. Best for general use and consumer cameras.",
+        'info': "Default choice. Best for general use, DSLR and unknown sensors.",
         'category': 'standard'
     },
-    "ProPhoto RGB": {
-        'weights': (0.2880, 0.7118, 0.0002),
-        'description': "Wide gamut color space (90% Pointer)",
-        'info': "Use for highly saturated emission nebulae. Low blue weight may increase noise.",
-        'category': 'wide-gamut'
-    },
-    "Sony IMX571": {
-        'weights': (0.2450, 0.6850, 0.0700),
-        'description': "Optimized for Sony IMX571 sensor (A6700, ASI533MC, QHY268C)",
-        'info': "Compensates for IMX571 QE curve and IR-cut filter. +9% luminance on Hα regions.",
+    
+    # --- SONY MODERN BSI (Consumer) ---
+    "Sony IMX571 (ASI2600/QHY268)": {
+        'weights': (0.2944, 0.5021, 0.2035),
+        'description': "Sony IMX571 26MP APS-C BSI (STARVIS)",
+        'info': "Gold standard APS-C. Excellent balance for broadband.",
         'category': 'sensor-specific'
     },
-    "Sony IMX662 (Starvis 2)": {
-        'weights': (0.2950, 0.6200, 0.0850),
-        'description': "Optimized for Sony IMX662 Starvis 2 (NIR-extended)",
-        'info': "For security/astro cameras with NIR response. Excellent for SII narrowband.",
+    
+    "Sony IMX533 (ASI533)": {
+        'weights': (0.2910, 0.5072, 0.2018),
+        'description': "Sony IMX533 9MP 1\" Square BSI (STARVIS)",
+        'info': "Popular square format. Very low noise.",
         'category': 'sensor-specific'
     },
+    
+    "Sony IMX455 (ASI6200/QHY600)": {
+        'weights': (0.2987, 0.5001, 0.2013),
+        'description': "Sony IMX455 61MP Full Frame BSI (STARVIS)",
+        'info': "Full frame reference sensor.",
+        'category': 'sensor-specific'
+    },
+    
+    "Sony IMX294 (ASI294)": {
+        'weights': (0.3068, 0.5008, 0.1925),
+        'description': "Sony IMX294 11.7MP 4/3\" BSI",
+        'info': "High sensitivity 4/3 format.",
+        'category': 'sensor-specific'
+    },
+    
+    "Sony IMX183 (ASI183)": {
+        'weights': (0.2967, 0.4983, 0.2050),
+        'description': "Sony IMX183 20MP 1\" BSI",
+        'info': "High resolution 1-inch sensor.",
+        'category': 'sensor-specific'
+    },
+    
+    "Sony IMX178 (ASI178)": {
+        'weights': (0.2346, 0.5206, 0.2448),
+        'description': "Sony IMX178 6.4MP 1/1.8\" BSI",
+        'info': "High resolution entry-level sensor.",
+        'category': 'sensor-specific'
+    },
+    
+    "Sony IMX224 (ASI224)": {
+        'weights': (0.3402, 0.4765, 0.1833),
+        'description': "Sony IMX224 1.27MP 1/3\" BSI",
+        'info': "Classic planetary sensor. High Red response.",
+        'category': 'sensor-specific'
+    },
+    
+    # --- SONY STARVIS 2 (NIR Optimized) ---
+    "Sony IMX585 (ASI585) - STARVIS 2": {
+        'weights': (0.3431, 0.4822, 0.1747),
+        'description': "Sony IMX585 8.3MP 1/1.2\" BSI (STARVIS 2)",
+        'info': "NIR optimized. Excellent for H-Alpha/Narrowband.",
+        'category': 'sensor-specific'
+    },
+    
+    "Sony IMX662 (ASI662) - STARVIS 2": {
+        'weights': (0.3430, 0.4821, 0.1749),
+        'description': "Sony IMX662 2.1MP 1/2.8\" BSI (STARVIS 2)",
+        'info': "Planetary/Guiding. High Red/NIR sensitivity.",
+        'category': 'sensor-specific'
+    },
+    
+    "Sony IMX678/715 - STARVIS 2": {
+        'weights': (0.3426, 0.4825, 0.1750),
+        'description': "Sony IMX678/715 BSI (STARVIS 2)",
+        'info': "High resolution planetary/security sensors.",
+        'category': 'sensor-specific'
+    },
+    
+    # --- PANASONIC / OTHERS ---
+    "Panasonic MN34230 (ASI1600/QHY163)": {
+        'weights': (0.2650, 0.5250, 0.2100),
+        'description': "Panasonic MN34230 4/3\" CMOS",
+        'info': "Classic Mono/OSC sensor. Optimized weights.",
+        'category': 'sensor-specific'
+    },
+    
+    # --- CANON DSLR (Averaged Profiles) ---
+    "Canon EOS (Modern - 60D/6D/R)": {
+        'weights': (0.2550, 0.5250, 0.2200),
+        'description': "Canon CMOS Profile (Modern)",
+        'info': "Balanced profile for most Canon EOS cameras (60D, 6D, 5D, R-series).",
+        'category': 'sensor-specific'
+    },
+    
+    "Canon EOS (Legacy - 300D/40D)": {
+        'weights': (0.2400, 0.5400, 0.2200),
+        'description': "Canon CMOS Profile (Legacy)",
+        'info': "For older Canon models (Digic 2/3 era).",
+        'category': 'sensor-specific'
+    },
+    
+    # --- NIKON DSLR (Averaged Profiles) ---
+    "Nikon DSLR (Modern - D5300/D850)": {
+        'weights': (0.2600, 0.5100, 0.2300),
+        'description': "Nikon CMOS Profile (Modern)",
+        'info': "Balanced profile for Nikon Expeed 4+ cameras.",
+        'category': 'sensor-specific'
+    },
+    
+    # --- SMART TELESCOPES ---
+    "ZWO Seestar S50": {
+        'weights': (0.3333, 0.4866, 0.1801),
+        'description': "ZWO Seestar S50 (IMX462)",
+        'info': "Specific profile for Seestar S50 smart telescope.",
+        'category': 'sensor-specific'
+    },
+    
+    "ZWO Seestar S30": {
+        'weights': (0.2928, 0.5053, 0.2019),
+        'description': "ZWO Seestar S30",
+        'info': "Specific profile for Seestar S30 smart telescope.",
+        'category': 'sensor-specific'
+    },
+    
+    # --- NARROWBAND ---
     "Narrowband HOO": {
         'weights': (0.5000, 0.2500, 0.2500),
         'description': "Bicolor palette: Hα=Red, OIII=Green+Blue",
         'info': "Balanced weighting for HOO synthetic palette processing.",
         'category': 'narrowband'
     },
+    
     "Narrowband SHO": {
         'weights': (0.3333, 0.3400, 0.3267),
         'description': "Hubble palette: SII=Red, Hα=Green, OIII=Blue",
@@ -477,6 +588,7 @@ class VeraLuxInterface:
         self.window = QMainWindow()
         self.window.setWindowTitle(f"VeraLux v{VERSION}")
         
+        # --- FIX: Set Fusion Style for Windows Geometry + Apply Dark Theme ---
         self.app.setStyle("Fusion") 
         self.window.setStyleSheet(DARK_STYLESHEET)
         
@@ -505,7 +617,7 @@ class VeraLuxInterface:
         grp_mode = QGroupBox("0. Processing Mode")
         l_mode = QVBoxLayout(grp_mode)
         
-        # Define Ready-to-Use
+        # Define Ready-to-Use FIRST
         self.radio_ready = QRadioButton("Ready-to-Use (Aesthetic)")
         self.radio_ready.setToolTip(
             "<b>Ready-to-Use Mode:</b><br>"
@@ -515,7 +627,7 @@ class VeraLuxInterface:
             "• Soft-clips highlights to reduce star blooming."
         )
         
-        # Define Scientific
+        # Define Scientific SECOND
         self.radio_scientific = QRadioButton("Scientific (Preserve)")
         self.radio_scientific.setToolTip(
             "<b>Scientific Mode:</b><br>"
@@ -543,7 +655,7 @@ class VeraLuxInterface:
         self.radio_ready.toggled.connect(self.update_mode_info)
         top_row.addWidget(grp_mode)
         
-        # 1. SENSOR CALIBRATION
+        # 1. SENSOR CALIBRATION (Renamed)
         grp_space = QGroupBox("1. Sensor Calibration")
         l_space = QVBoxLayout(grp_space)
         l_combo = QHBoxLayout()
@@ -567,7 +679,7 @@ class VeraLuxInterface:
         
         layout.addLayout(top_row)
         
-        # --- 2. STRETCH ENGINE & CALIBRATION ---
+        # --- 2. STRETCH ENGINE & CALIBRATION (Merged) ---
         grp_combined = QGroupBox("2. Stretch Engine & Calibration")
         l_combined = QVBoxLayout(grp_combined)
         
