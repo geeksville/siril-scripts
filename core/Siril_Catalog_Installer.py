@@ -17,8 +17,9 @@
 # 2.2.0 Refactored with VisPy sphere visualization
 # 2.2.1 Disable zooming (prevents visual glitches)
 # 2.2.2 Force X11 backend: PyOpenGL has problems on pure Wayland desktops
+# 2.2.3 Fix bug in 2.2.2
 
-VERSION = "2.2.2"
+VERSION = "2.2.3"
 
 # Catalog retrieval details
 ASTRO_RECORD = 14692304
@@ -33,6 +34,7 @@ import bz2
 import hashlib
 import math
 import os
+import platform
 import sys
 import ctypes
 import urllib.request
@@ -1056,7 +1058,8 @@ def process_pixels(pixels, url_base, target_path):
 def main():
     """Main entry point"""
     try:
-        os.environ['QT_QPA_PLATFORM'] = 'xcb' # Force XWayland: Wayland doesn't seem to work with PyOpenGL
+        if platform.system().lower() == 'linux':
+            os.environ['QT_QPA_PLATFORM'] = 'xcb' # Force XWayland: Wayland doesn't seem to work with PyOpenGL
         app = QApplication(sys.argv)
         app.setStyle('Fusion')
         app.setApplicationName("Siril Catalog Installer")
