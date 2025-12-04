@@ -2,12 +2,13 @@
 # VeraLux — HyperMetric Stretch
 # Photometric Hyperbolic Stretch Engine
 # Author: Riccardo Paterniti (2025)
+# Contact: info@veralux.space
 ##############################################
 
 # (c) 2025 Riccardo Paterniti
 # VeraLux — HyperMetric Stretch
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Version 1.0.2
+# Version 1.0.3
 #
 # Credits / Origin
 # ----------------
@@ -157,15 +158,30 @@ QPushButton#AutoButton { background-color: #8c6a00; border: 1px solid #a37c00; }
 QPushButton#AutoButton:hover { background-color: #bfa100; color: #000000;}
 QPushButton#CloseButton { background-color: #5a2a2a; border: 1px solid #804040; }
 QPushButton#CloseButton:hover { background-color: #7a3a3a; }
+
+/* GHOST HELP BUTTON */
+QPushButton#HelpButton { 
+    background-color: transparent; 
+    color: #555555; 
+    border: none; 
+    font-weight: bold; 
+    min-width: 20px;
+}
+QPushButton#HelpButton:hover { 
+    color: #aaaaaa; 
+}
+
 QProgressBar { border: 1px solid #555555; border-radius: 3px; text-align: center; }
 QProgressBar::chunk { background-color: #285299; width: 10px; }
 """
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 # ------------------------------------------------------------------------------
 # VERSION HISTORY
 # ------------------------------------------------------------------------------
-# 1.0.2: Sensor DB update, based on Siril SPCC list and parameters.
+# 1.0.3: Added help button (?) that prints Operational Guide to Siril Console.
+#        Added contact e-mail. Texts consistency minor fixes.
+# 1.0.2: Sensor Database Update (v2.0). Added real QE weights for 15+ sensors.
 # 1.0.1: Fix Windows GUI artifacts (invisible checkboxes) and UI polish.
 # ------------------------------------------------------------------------------
 
@@ -576,6 +592,7 @@ class VeraLuxInterface:
             "# VeraLux — HyperMetric Stretch\n"
             "# Photometric Hyperbolic Stretch Engine\n"
             "# Author: Riccardo Paterniti (2025)\n"
+            "# Contact: info@veralux.space\n"
             "##############################################"
         )
         try:
@@ -599,11 +616,17 @@ class VeraLuxInterface:
         layout = QVBoxLayout(central)
         layout.setSpacing(8) 
         
-        # Header
-        head = QLabel(f"VERALUX v{VERSION}\nPhotometric GHS Engine")
-        head.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        head.setStyleSheet("font-size: 14pt; font-weight: bold; color: #88aaff;")
-        layout.addWidget(head)
+        # Header Title
+        head_title = QLabel(f"VeraLux HyperMetric Stretch v{VERSION}")
+        head_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        head_title.setStyleSheet("font-size: 14pt; font-weight: bold; color: #88aaff;")
+        layout.addWidget(head_title)
+
+        # Subtitle
+        head_sub = QLabel("Photometric Hyperbolic Stretch Engine")
+        head_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        head_sub.setStyleSheet("font-size: 12pt; font-weight: normal; color: #88aaff;")
+        layout.addWidget(head_sub)
         
         subhead = QLabel("Requirement: Linear Data • Color Calibration (SPCC) Applied")
         subhead.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -688,10 +711,10 @@ class VeraLuxInterface:
         l_calib.addWidget(QLabel("Target Background:"))
         self.spin_target = QDoubleSpinBox()
         self.spin_target.setToolTip(
-            "<b>Target Background Level:</b><br>"
+            "<b>Target Background (Median):</b><br>"
             "The desired median value for the background sky.<br>"
-            "• <b>0.20</b> (Default): Standard brightness.<br>"
-            "• <b>0.12</b>: High-contrast, darker background."
+            "• <b>0.20</b> is standard for good visibility (Statistical Stretch style).<br>"
+            "• <b>0.12</b> for high-contrast dark skies."
         )
         self.spin_target.setRange(0.05, 0.50); self.spin_target.setValue(0.20); self.spin_target.setSingleStep(0.01)
         l_calib.addWidget(self.spin_target)
@@ -781,6 +804,14 @@ class VeraLuxInterface:
         
         btns = QHBoxLayout()
         
+        # Help Button
+        self.btn_help = QPushButton("?")
+        self.btn_help.setObjectName("HelpButton")
+        self.btn_help.setToolTip("Print Operational Guide to Siril Console")
+        self.btn_help.setFixedWidth(20)
+        self.btn_help.clicked.connect(self.print_help_to_console)
+        btns.addWidget(self.btn_help)
+        
         # Always on top Toggle
         self.chk_ontop = QCheckBox("Always on top")
         self.chk_ontop.setToolTip("Keep this window above Siril")
@@ -816,6 +847,63 @@ class VeraLuxInterface:
         self.center_window()
         self.cache_input() # Initial cache
 
+    def print_help_to_console(self):
+        """Prints the operational guide to the Siril console line by line to avoid truncation."""
+        guide_lines = [
+            "\n-------------------------------------------------------------\n"
+            "VeraLux HyperMetric Stretch — OPERATIONAL GUIDE\n"
+            "Physics-Based Photometric Hyperbolic Stretch Engine\n"
+            "-------------------------------------------------------------\n\n"
+            "",
+            "[1] PREREQUISITES (CRITICAL)\n"
+            "             • Input must be LINEAR (not yet stretched).\n"
+            "             • Background extraction must have already been done.\n"
+            "             • RGB input must be Color Calibrated (SPCC) within Siril first.\n"
+            "               (HMS locks color vectors: wrong input color = wrong output).\n\n"
+            "",
+            "[2] WORKFLOW & PARAMETERS\n\n"
+            "             A. SETUP PHASE\n"
+            "                • Processing Mode:\n"
+            "                  - \"Ready-to-Use\" (Default): Applies Star-Safe expansion, Linked MTF\n"
+            "                    at the end of the pipeline and Highlight Soft-Clip. Export-ready results.\n"
+            "                  - \"Scientific\": Raw GHS stretch. Hard-clip at 1.0. No cosmetic fixes.\n"
+            "                    Need for subsequent tone mapping (e.g. curves) in most cases.\n"
+            "                    If you use curves, do not touch the black and white points\n"
+            "                    so as not to lose precious data!\n"
+            "                • Sensor Profile: Defines Luminance weights based on Quantum Efficiency.\n"
+            "                  (Use \"Rec.709\" if sensor is unknown or for mono images).\n\n"
+            "",
+            "   B. CALIBRATION (THE MAGIC BUTTON)\n"
+            "                • Target Background: Desired sky brightness (0.20 is standard).\n"
+            "                • [⚡ Auto-Calculate]: Analyzes image stats and automatically sets\n"
+            "                  the optimal \"Log D\" to match your Target Background.\n\n"
+            "",
+            "   C. FINE TUNING (PHYSICS)\n"
+            "                • Stretch (Log D): Intensity. Higher = brighter midtones.\n"
+            "                • Protect b: Highlight Protection. Controls the curve \"knee\".\n"
+            "                  - Higher (>6.0): Protects stars from bloating (sharper profiles).\n"
+            "                  - Lower (<2.0): Brighter highlights but higher risk of bloating.\n"
+            "                • Star Recovery (White Point): Controls Color Convergence.\n"
+            "                  - Determines how fast a saturated core fades to pure white.\n"
+            "                  - Increase this if you see \"donut\" artifacts or holes in stars.\n\n"
+            "",
+            "   D. EXECUTION & RESET\n"
+            "                • [Default Settings]: Resets only sliders/menus to factory defaults.\n"
+            "                • [Reload Input]: Re-caches the linear image from Siril.\n"
+            "                  Acts as a full \"Undo\" to restart processing from scratch.\n\n"
+            "",
+            "Support & Info: info@veralux.space\n"
+            "-------------------------------------------------------------"
+        ]
+        
+        try:
+            # Iterate and print line by line to avoid buffer limits
+            for line in guide_lines:
+                self.siril.log(line)
+            self.status.setText("Guide printed to Console.")
+        except:
+            print("\n".join(guide_lines))
+
     def center_window(self):
         screen = self.app.primaryScreen()
         if screen:
@@ -847,7 +935,9 @@ class VeraLuxInterface:
         if profile_name in SENSOR_PROFILES:
             profile = SENSOR_PROFILES[profile_name]
             r, g, b = profile['weights']
-            text = f"{profile['description']}\nWeights: R={r:.4f}, G={g:.4f}, B={b:.4f}" # Info removed to save space
+            text = f"{profile['description']}\n"
+            text += f"Weights: R={r:.4f}, G={g:.4f}, B={b:.4f}\n"
+            text += f"💡 {profile['info']}"
             self.label_profile_info.setText(text)
 
     def set_defaults(self):
@@ -920,7 +1010,6 @@ def main():
         app.exec()
     except Exception as e:
         print(f"Error starting VeraLux: {e}")
-        # In case of CLI or other contexts, print trace
         traceback.print_exc()
 
 if __name__ == "__main__":
