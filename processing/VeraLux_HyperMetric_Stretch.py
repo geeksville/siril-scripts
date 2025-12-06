@@ -23,12 +23,80 @@ Overview
 A precision linear-to-nonlinear stretching engine designed to maximize sensor 
 fidelity while managing the transition to the visible domain.
 
-Version 1.1.0 Architecture Notes:
-- Unified Math Core: Solver and Processor now use identical logic via VeraLuxCore class.
-- Robust Data Normalization: Explicit handling of uint8/uint16/float inputs.
-- Consistent Anchor Calculation: Single algorithm for black point detection.
+HyperMetric Stretch (HMS) operates on a fundamental axiom: standard histogram 
+transformations often destroy the photometric relationships between color channels 
+(hue shifts) and clip high-dynamic range data. HMS solves this by decoupling 
+Luminance geometry from Chromatic vectors.
 
-... [Previous documentation preserved] ...
+The tool introduces a "Dual Philosophy" architecture: it serves both the 
+photometric purist (Scientific Mode) and the aesthetic imager (Ready-to-Use Mode) 
+without compromising the mathematical integrity of either workflow.
+
+Design Goals
+------------
+• Preserve original vector color ratios during extreme stretching (True Color)
+• Optimize Luminance extraction based on specific hardware (Sensor Profiles)
+• Provide a mathematically "Safe" expansion for high-dynamic targets
+• Eliminate the "flat look" of logarithmic stretches via Adaptive Scaling
+• Ensure rigorous data handling across any bit-depth topology (16/32-bit)
+
+Core Features
+-------------
+• Unified Math Core (v1.1.0):
+  - Implements a "Single Source of Truth" architecture. The Auto-Solver and 
+    the Main Processor share the exact same logic, guaranteeing that predicted 
+    background values match the final output with decimal precision.
+• Dual Processing Philosophy:
+  - Scientific Mode: 100% lossless, hard-clip at physical saturation (1.0), 
+    no post-processing. Ideal for photometry and pure data analysis.
+  - Ready-to-Use Mode: Applies "Star-Safe" expansion, Linked MTF optimization, 
+    and highlight soft-clipping. Delivers an aesthetic, export-ready image.
+• Hardware-Aware Color Science:
+  - Extensive database of sensors with precise Quantum Efficiency weights
+    derived from Siril's SPCC database.
+• Robust Input Normalization:
+  - Automatically handles 8, 16, 32-bit Integer or 32-bit Float inputs, 
+    preventing clipping or black-point errors on high-dynamic range files.
+• Physics-Based Math:
+  - Log-GHS Engine: Generalized Hyperbolic Stretch focused on midtone contrast.
+  - Color Convergence: Controls the roll-off to white point for star cores.
+
+Usage
+-----
+1. Pre-requisite: Image MUST be Linear and Color Calibrated (SPCC).
+2. Setup: Select your Sensor Profile (or Rec.709) and Processing Mode.
+   (Default is "Ready-to-Use" for immediate results).
+3. Calibrate: Click Calculate Optimal Log D (Auto-Solver) to analyze the 
+   linear data and find the mathematical sweet spot for the stretch.
+4. Refine: Adjust Stretch Power and Highlight Protection (b) if needed.
+5. Process: Click PROCESS.
+   - The script automatically resets the display visualization to linear 
+     to ensure the result is immediately visible and correctly scaled.
+
+Inputs & Outputs
+----------------
+Input:
+• Linear FITS/TIFF images (RGB or Mono).
+• Supports 16-bit/32-bit Integer and 32-bit Float formats automatically.
+
+Output:
+• Non-linear (Stretched) 32-bit Float FITS.
+
+Compatibility
+-------------
+• Siril 1.3+
+• Python 3.10+ (via sirilpy)
+• Dependencies:
+  - sirilpy
+  - PyQt6
+  - numpy
+
+License
+-------
+Released under GPL-3.0-or-later.
+
+This script is part of the VeraLux family of tools —
+focused on maximizing data fidelity through physics-based processing.
 """
 
 import sys
@@ -996,7 +1064,7 @@ class VeraLuxInterface:
             "   D. EXECUTION & RESET\n"
             "                • [Default Settings]: Resets only sliders/menus to factory defaults.\n"
             "                • [Reload Input]: Re-caches the linear image from Siril.\n"
-            "                  Acts as a full \"Undo\" to restart processing from scratch.\n\n"
+            "                • For full \"Undo\" use the back button in Siril.\n\n"
             "",
             "Support & Info: info@veralux.space\n"
             "-------------------------------------------------------------"
