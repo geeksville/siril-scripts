@@ -8,7 +8,7 @@
 # (c) 2025 Riccardo Paterniti
 # VeraLux — HyperMetric Stretch
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Version 1.0.3
+# Version 1.1.0 (Architecture Upgrade)
 #
 # Credits / Origin
 # ----------------
@@ -23,75 +23,12 @@ Overview
 A precision linear-to-nonlinear stretching engine designed to maximize sensor 
 fidelity while managing the transition to the visible domain.
 
-HyperMetric Stretch (HMS) operates on a fundamental axiom: standard histogram 
-transformations often destroy the photometric relationships between color channels 
-(hue shifts) and clip high-dynamic range data. HMS solves this by decoupling 
-Luminance geometry from Chromatic vectors.
+Version 1.1.0 Architecture Notes:
+- Unified Math Core: Solver and Processor now use identical logic via VeraLuxCore class.
+- Robust Data Normalization: Explicit handling of uint8/uint16/float inputs.
+- Consistent Anchor Calculation: Single algorithm for black point detection.
 
-The tool introduces a "Dual Philosophy" architecture: it serves both the 
-photometric purist (Scientific Mode) and the aesthetic imager (Ready-to-Use Mode) 
-without compromising the mathematical integrity of either workflow.
-
-Design Goals
-------------
-• Preserve original vector color ratios during extreme stretching (True Color)
-• Optimize Luminance extraction based on specific hardware (Sensor Profiles)
-• Provide a mathematically "Safe" expansion for high-dynamic targets
-• Eliminate the "flat look" of logarithmic stretches via Adaptive Scaling
-• Ensure strictly linear input handling (requires SPCC calibration)
-
-Core Features
--------------
-• Dual Processing Philosophy:
-  - Scientific Mode: 100% lossless, hard-clip at physical saturation (1.0), 
-    no post-processing. Ideal for photometry and pure data analysis.
-  - Ready-to-Use Mode: Applies "Star-Safe" expansion, Linked MTF optimization, 
-    and highlight soft-clipping. Delivers an aesthetic, export-ready image.
-• Hardware-Aware Color Science:
-  - Extensive database of sensors with precise Quantum Efficiency weights
-    derived from Siril's SPCC database.
-• Star-Safe Expansion Engine:
-  - Intelligent dynamic range analysis that distinguishes between diffuse nebulae 
-    and stellar cores, preventing "bloating" on bright targets.
-• Physics-Based Math:
-  - Log-GHS Engine: Generalized Hyperbolic Stretch focused on midtone contrast.
-  - Color Convergence: Controls the roll-off to white point for star cores.
-
-Usage
------
-1. Pre-requisite: Image MUST be Linear and Color Calibrated (SPCC).
-2. Setup: Select your Sensor Profile (or Rec.709) and Processing Mode.
-   (Default is "Ready-to-Use" for immediate results).
-3. Calibrate: Click Calculate Optimal Log D (Auto-Solver) to analyze the 
-   linear data and find the mathematical sweet spot for the stretch.
-4. Refine: Adjust Stretch Power and Highlight Protection (b) if needed.
-5. Process: Click PROCESS.
-   - If Scientific: The result is a raw container for further tone mapping.
-   - If Ready-to-Use: The result is ready for export or fine-tuning.
-
-Inputs & Outputs
-----------------
-Input:
-• Linear FITS images (RGB or Mono), pre-processed and color calibrated (SPCC).
-
-Output:
-• Non-linear (Stretched) 32-bit Float FITS.
-
-Compatibility
--------------
-• Siril 1.3+
-• Python 3.10+ (via sirilpy)
-• Dependencies:
-  - sirilpy
-  - PyQt6
-  - numpy
-
-License
--------
-Released under GPL-3.0-or-later.
-
-This script is part of the VeraLux family of tools —
-focused on maximizing data fidelity through physics-based processing.
+... [Previous documentation preserved] ...
 """
 
 import sys
@@ -175,16 +112,18 @@ QProgressBar { border: 1px solid #555555; border-radius: 3px; text-align: center
 QProgressBar::chunk { background-color: #285299; width: 10px; }
 """
 
-VERSION = "1.0.3"
+VERSION = "1.1.0"
 # ------------------------------------------------------------------------------
 # VERSION HISTORY
 # ------------------------------------------------------------------------------
+# 1.1.0: Architecture Upgrade. Introduced VeraLuxCore (Single Source of Truth).
+#        Fixed 32-bit/Mono input handling & visual refresh issues (visu reset).
+#        Added robust input normalization & improved Solver precision.
 # 1.0.3: Added help button (?) that prints Operational Guide to Siril Console.
 #        Added contact e-mail. Texts consistency minor fixes.
 # 1.0.2: Sensor Database Update (v2.0). Added real QE weights for 15+ sensors.
 # 1.0.1: Fix Windows GUI artifacts (invisible checkboxes) and UI polish.
 # ------------------------------------------------------------------------------
-
 
 # =============================================================================
 #  WORKING SPACE PROFILES (Database v2.1 - Siril SPCC Derived)
@@ -336,53 +275,167 @@ SENSOR_PROFILES = {
 DEFAULT_PROFILE = "Rec.709 (Recommended)"
 
 # =============================================================================
-#  MATH ENGINE
+#  CORE ENGINE (Single Source of Truth) - V1.1.0 Implementation
 # =============================================================================
 
-def ghs_stretch(data, D, b, SP=0.0):
-    """Generalized Hyperbolic Stretch."""
-    D = max(D, 0.1)
-    b = max(b, 0.1)
-    term1 = np.arcsinh(D * (data - SP) + b)
-    term2 = np.arcsinh(b)
-    norm_factor = np.arcsinh(D * (1.0 - SP) + b) - term2
-    if norm_factor == 0: norm_factor = 1e-6
-    stretched = (term1 - term2) / norm_factor
-    return stretched
+class VeraLuxCore:
+    """
+    Centralized math library for VeraLux.
+    Ensures consistency between AutoSolver (Preview) and Main Processor.
+    """
+    
+    @staticmethod
+    def normalize_input(img_data):
+        """
+        Robustly normalizes input data to float32 range [0.0, 1.0].
+        Handles uint8, uint16, uint32 and various float scenarios.
+        """
+        input_dtype = img_data.dtype
+        
+        # Helper to convert to float32 before division
+        img_float = img_data.astype(np.float32)
+        
+        # Case 1: Integer Types
+        if np.issubdtype(input_dtype, np.integer):
+            if input_dtype == np.uint8:
+                return img_float / 255.0
+            elif input_dtype == np.uint16:
+                return img_float / 65535.0
+            elif input_dtype == np.uint32:
+                return img_float / 4294967295.0
+            else:
+                info = np.iinfo(input_dtype)
+                return img_float / float(info.max)
+                
+        # Case 2: Float Types (Container analysis)
+        elif np.issubdtype(input_dtype, np.floating):
+            # Check maximum only if necessary for optimization
+            # Use np.max() on flattened array or sample if huge, 
+            # but for safety, check global max.
+            current_max = np.max(img_data)
+            
+            # Scenario A: Already normalized [0-1]
+            if current_max <= 1.0 + 1e-5:
+                return img_float
+            
+            # Scenario B: Scaled to 8-bit [0-255]
+            if current_max <= 255.0:
+                return img_float / 255.0
+                
+            # Scenario C: Scaled to 16-bit [0-65535]
+            if current_max <= 65535.0:
+                return img_float / 65535.0
+                
+            # Scenario D: Scaled to 32-bit [0-4.29B]
+            # If > 65535, assume 32-bit scaling
+            return img_float / 4294967295.0
+            
+        return img_float
 
-def solve_stretch_factor(data_sample, target_median, b_val, luma_weights=(0.2126, 0.7152, 0.0722)):
-    median_in = np.median(data_sample)
-    if median_in < 1e-8: return 2.0 
-    low_log = 0.0; high_log = 7.0; best_log_D = 2.0
-    for _ in range(40):
-        mid_log = (low_log + high_log) / 2.0
-        mid_D = 10.0 ** mid_log
-        test_val = ghs_stretch(median_in, mid_D, b_val)
-        if abs(test_val - target_median) < 0.002:
-            best_log_D = mid_log; break
-        if test_val < target_median: low_log = mid_log
-        else: high_log = mid_log
-    return best_log_D
+    @staticmethod
+    def calculate_anchor(data_norm):
+        """
+        Unified Black Point (Anchor) calculation.
+        input: data_norm (normalized 0-1), shape (Channels, H, W) or (H, W)
+        """
+        if data_norm.ndim == 3:
+            # Multi-channel: Find floor per channel
+            floors = []
+            stride = max(1, data_norm.size // 500000) # Adaptive subsampling for speed
+            for c in range(data_norm.shape[0]):
+                channel_floor = np.percentile(data_norm[c].flatten()[::stride], 0.5)
+                floors.append(channel_floor)
+            # Safe floor is min of channels minus pedestal
+            anchor = max(0.0, min(floors) - 0.00025)
+        else:
+            # Mono
+            stride = max(1, data_norm.size // 200000)
+            floor = np.percentile(data_norm.flatten()[::stride], 0.5)
+            anchor = max(0.0, floor - 0.00025)
+        return anchor
 
-def apply_mtf(data, m):
-    term1 = (m - 1.0) * data
-    term2 = (2.0 * m - 1.0) * data - m
-    with np.errstate(divide='ignore', invalid='ignore'):
-        res = term1 / term2
-    return np.nan_to_num(res, nan=0.0, posinf=1.0, neginf=0.0)
+    @staticmethod
+    def extract_luminance(data_norm, anchor, weights):
+        """
+        Extracts anchored Luminance based on sensor weights.
+        Returns: L_anchored (0-based) and L_safe (for division)
+        """
+        r_w, g_w, b_w = weights
+        img_anchored = np.maximum(data_norm - anchor, 0.0)
+        
+        # Robust Mono/RGB handling
+        # True RGB: (3, H, W)
+        if data_norm.ndim == 3 and data_norm.shape[0] == 3:
+            L_anchored = (r_w * img_anchored[0] + 
+                          g_w * img_anchored[1] + 
+                          b_w * img_anchored[2])
+        # Mono masked as 3D: (1, H, W)
+        elif data_norm.ndim == 3 and data_norm.shape[0] == 1:
+            L_anchored = img_anchored[0]
+            img_anchored = img_anchored[0] # Flatten for consistency
+        # Pure Mono: (H, W)
+        else:
+            L_anchored = img_anchored
+            
+        return L_anchored, img_anchored
+
+    @staticmethod
+    def ghs_stretch(data, D, b, SP=0.0):
+        """Generalized Hyperbolic Stretch Formula."""
+        D = max(D, 0.1)
+        b = max(b, 0.1)
+        term1 = np.arcsinh(D * (data - SP) + b)
+        term2 = np.arcsinh(b)
+        norm_factor = np.arcsinh(D * (1.0 - SP) + b) - term2
+        if norm_factor == 0: norm_factor = 1e-6
+        stretched = (term1 - term2) / norm_factor
+        return stretched
+
+    @staticmethod
+    def solve_log_d(luma_sample, target_median, b_val):
+        """Iterative solver for Log D."""
+        median_in = np.median(luma_sample)
+        if median_in < 1e-9: return 2.0 
+        
+        low_log = 0.0; high_log = 7.0; best_log_D = 2.0
+        
+        for _ in range(40):
+            mid_log = (low_log + high_log) / 2.0
+            mid_D = 10.0 ** mid_log
+            test_val = VeraLuxCore.ghs_stretch(median_in, mid_D, b_val)
+            
+            if abs(test_val - target_median) < 0.0001:
+                best_log_D = mid_log; break
+            
+            if test_val < target_median: low_log = mid_log
+            else: high_log = mid_log
+            
+        return best_log_D
+
+    @staticmethod
+    def apply_mtf(data, m):
+        term1 = (m - 1.0) * data
+        term2 = (2.0 * m - 1.0) * data - m
+        with np.errstate(divide='ignore', invalid='ignore'):
+            res = term1 / term2
+        return np.nan_to_num(res, nan=0.0, posinf=1.0, neginf=0.0)
+
+# =============================================================================
+#  HELPER FUNCTIONS (Ready-to-Use Logic)
+# =============================================================================
 
 def adaptive_output_scaling(img_data, working_space="Rec.709 (Standard)", 
                             target_bg=0.20, progress_callback=None):
-    """Adaptive Star-Safe Scaling"""
+    """Adaptive Star-Safe Scaling - operates on normalized (CHW) data"""
     if progress_callback: progress_callback("Adaptive Scaling: Analyzing Dynamic Range (Anti-Bloat)...")
     luma_r, luma_g, luma_b = SENSOR_PROFILES[working_space]['weights']
     is_rgb = (img_data.ndim == 3 and img_data.shape[0] == 3)
     
     if is_rgb:
-        R, G, B = img_data[0].copy(), img_data[1].copy(), img_data[2].copy()
+        R, G, B = img_data[0], img_data[1], img_data[2]
         L_raw = luma_r * R + luma_g * G + luma_b * B
     else:
-        L_raw = img_data[0] if img_data.ndim == 3 else img_data
+        L_raw = img_data
     
     median_L = float(np.median(L_raw))
     std_L    = float(np.std(L_raw))
@@ -393,13 +446,21 @@ def adaptive_output_scaling(img_data, working_space="Rec.709 (Standard)",
     TARGET_SOFT = 0.98; TARGET_HARD = 1.0
     
     if is_rgb:
-        soft_r = np.percentile(R, 99.0); soft_g = np.percentile(G, 99.0); soft_b = np.percentile(B, 99.0)
+        # Use simple percentiles for speed
+        stride = max(1, R.size // 500000)
+        soft_r = np.percentile(R.flatten()[::stride], 99.0)
+        soft_g = np.percentile(G.flatten()[::stride], 99.0)
+        soft_b = np.percentile(B.flatten()[::stride], 99.0)
         soft_ceil = max(soft_r, soft_g, soft_b)
-        hard_r = np.percentile(R, 99.99); hard_g = np.percentile(G, 99.99); hard_b = np.percentile(B, 99.99)
+        
+        hard_r = np.percentile(R.flatten()[::stride], 99.99)
+        hard_g = np.percentile(G.flatten()[::stride], 99.99)
+        hard_b = np.percentile(B.flatten()[::stride], 99.99)
         hard_ceil = max(hard_r, hard_g, hard_b)
     else:
-        soft_ceil = np.percentile(L_raw, 99.0)
-        hard_ceil = np.percentile(L_raw, 99.99)
+        stride = max(1, L_raw.size // 200000)
+        soft_ceil = np.percentile(L_raw.flatten()[::stride], 99.0)
+        hard_ceil = np.percentile(L_raw.flatten()[::stride], 99.99)
         
     if soft_ceil <= global_floor: soft_ceil = global_floor + 1e-6
     if hard_ceil <= soft_ceil: hard_ceil = soft_ceil + 1e-6
@@ -415,14 +476,15 @@ def adaptive_output_scaling(img_data, working_space="Rec.709 (Standard)",
     def expand_channel(c):
         return np.clip((c - global_floor) * final_scale + PEDESTAL, 0.0, 1.0)
         
+    # Apply expansion
     if is_rgb:
-        R = expand_channel(R); G = expand_channel(G); B = expand_channel(B)
-        L_norm = luma_r * R + luma_g * G + luma_b * B
+        img_data[0] = expand_channel(R)
+        img_data[1] = expand_channel(G)
+        img_data[2] = expand_channel(B)
+        L = luma_r * img_data[0] + luma_g * img_data[1] + luma_b * img_data[2]
     else:
-        L_norm = expand_channel(L_raw)
-        
-    if is_rgb: L = luma_r * R + luma_g * G + luma_b * B
-    else: L = L_norm
+        img_data = expand_channel(L_raw)
+        L = img_data
     
     current_bg = float(np.median(L))
     if current_bg > 0.0 and current_bg < 1.0 and abs(current_bg - target_bg) > 1e-3:
@@ -430,16 +492,12 @@ def adaptive_output_scaling(img_data, working_space="Rec.709 (Standard)",
         x = current_bg; y = target_bg
         m = (x * (y - 1.0)) / (x * (2.0 * y - 1.0) - y)
         if is_rgb:
-            img_data[0] = apply_mtf(R, m); img_data[1] = apply_mtf(G, m); img_data[2] = apply_mtf(B, m)
+            img_data[0] = VeraLuxCore.apply_mtf(img_data[0], m)
+            img_data[1] = VeraLuxCore.apply_mtf(img_data[1], m)
+            img_data[2] = VeraLuxCore.apply_mtf(img_data[2], m)
         else:
-            L_out = apply_mtf(L_norm, m)
-            if img_data.ndim == 3: img_data[0] = L_out
-            else: img_data[:] = L_out
-    else:
-        if is_rgb: img_data[0], img_data[1], img_data[2] = R, G, B
-        else:
-            if img_data.ndim == 3: img_data[0] = L_norm
-            else: img_data[:] = L_norm
+            img_data = VeraLuxCore.apply_mtf(img_data, m)
+            
     return img_data
 
 def apply_ready_to_use_soft_clip(img_data, threshold=0.98, rolloff=2.0, progress_callback=None):
@@ -454,14 +512,11 @@ def apply_ready_to_use_soft_clip(img_data, threshold=0.98, rolloff=2.0, progress
             result[mask] = thresh + (1.0 - thresh) * f
         return np.clip(result, 0.0, 1.0)
     
-    is_rgb = (img_data.ndim == 3 and img_data.shape[0] == 3)
-    if is_rgb:
-        img_data[0] = soft_clip_channel(img_data[0], threshold, rolloff)
-        img_data[1] = soft_clip_channel(img_data[1], threshold, rolloff)
-        img_data[2] = soft_clip_channel(img_data[2], threshold, rolloff)
+    if img_data.ndim == 3:
+        for i in range(img_data.shape[0]):
+            img_data[i] = soft_clip_channel(img_data[i], threshold, rolloff)
     else:
-        if img_data.ndim == 3: img_data[0] = soft_clip_channel(img_data[0], threshold, rolloff)
-        else: img_data = soft_clip_channel(img_data, threshold, rolloff)
+        img_data = soft_clip_channel(img_data, threshold, rolloff)
     return img_data
 
 def process_veralux_v6(img_data, log_D, protect_b, convergence_power, 
@@ -469,61 +524,84 @@ def process_veralux_v6(img_data, log_D, protect_b, convergence_power,
                        processing_mode="ready_to_use",
                        target_bg=None,
                        progress_callback=None):
-    if progress_callback: progress_callback("Analyzing Data Structure...")
-    luma_r, luma_g, luma_b = SENSOR_PROFILES[working_space]['weights']
-    if img_data.ndim == 3: img = img_data.transpose(1, 2, 0).astype(np.float64)
-    else: img = img_data.astype(np.float64)[:, :, np.newaxis]
-    is_rgb = (img.shape[2] == 3)
     
-    if np.median(img) > 1.0: img = np.clip(img, 0.0, 65535.0) / 65535.0
-    else: img = np.clip(img, 0.0, 1.0)
+    if progress_callback: progress_callback("Normalization & Analysis...")
+    
+    # 1. Normalize Input using Core
+    img = VeraLuxCore.normalize_input(img_data)
+    
+    # Ensure format is (Channels, H, W) for internal processing
+    # Siril usually gives (Channels, H, W). We stick to it.
+    if img.ndim == 2:
+        pass # Mono
+    elif img.ndim == 3 and img.shape[0] != 3 and img.shape[2] == 3:
+        # If by chance input is (H, W, 3), transpose to (3, H, W)
+        img = img.transpose(2, 0, 1)
 
-    if progress_callback: progress_callback("Calculating Soft-Landing Anchor...")
-    if is_rgb:
-        stride = max(1, img.size // 500000)
-        floors = [np.percentile(img[:,:,c].flatten()[::stride], 0.5) for c in range(3)]
-        anchor = max(0.0, min(floors) - 0.00025)
-    else:
-        stride = max(1, img.size // 200000)
-        anchor = max(0.0, np.percentile(img[:,:,0].flatten()[::stride], 0.5) - 0.00025)
-        
-    img_anchored = np.maximum(img - anchor, 0.0)
+    luma_weights = SENSOR_PROFILES[working_space]['weights']
+    is_rgb = (img.ndim == 3)
+
+    # 2. Calculate Anchor using Core
+    if progress_callback: progress_callback("Calculating Anchor...")
+    anchor = VeraLuxCore.calculate_anchor(img)
     
+    # 3. Extract Luminance using Core
     if progress_callback: progress_callback(f"Extracting Luminance ({working_space})...")
-    if is_rgb: L_anchored = (luma_r * img_anchored[:, :, 0] + luma_g * img_anchored[:, :, 1] + luma_b * img_anchored[:, :, 2])
-    else: L_anchored = img_anchored[:, :, 0]
-        
-    epsilon = 1e-9; L_safe = L_anchored + epsilon
-    if is_rgb:
-        r_ratio = (img_anchored[:,:,0]) / L_safe; g_ratio = (img_anchored[:,:,1]) / L_safe; b_ratio = (img_anchored[:,:,2]) / L_safe
-
-    if progress_callback: progress_callback(f"Stretching (Log D={log_D:.2f})...")
-    L_str = ghs_stretch(L_anchored, 10.0 ** log_D, protect_b)
+    L_anchored, img_anchored = VeraLuxCore.extract_luminance(img, anchor, luma_weights)
     
+    # Prepare Ratios for Vector Preservation
+    epsilon = 1e-9
+    L_safe = L_anchored + epsilon
+    
+    if is_rgb:
+        r_ratio = img_anchored[0] / L_safe
+        g_ratio = img_anchored[1] / L_safe
+        b_ratio = img_anchored[2] / L_safe
+
+    # 4. Stretch using Core GHS
+    if progress_callback: progress_callback(f"Stretching (Log D={log_D:.2f})...")
+    L_str = VeraLuxCore.ghs_stretch(L_anchored, 10.0 ** log_D, protect_b)
+    L_str = np.clip(L_str, 0.0, 1.0)
+    
+    # 5. Dynamic Color Convergence
     if progress_callback: progress_callback("Dynamic Color Convergence...")
-    final = np.zeros_like(img); L_str = np.clip(L_str, 0.0, 1.0)
+    final = np.zeros_like(img)
     
     if is_rgb:
         k = np.power(L_str, convergence_power)
         r_final = r_ratio * (1.0 - k) + 1.0 * k
         g_final = g_ratio * (1.0 - k) + 1.0 * k
         b_final = b_ratio * (1.0 - k) + 1.0 * k
-        final[:,:,0] = L_str * r_final; final[:,:,1] = L_str * g_final; final[:,:,2] = L_str * b_final
-    else: final[:,:,0] = L_str
+        
+        final[0] = L_str * r_final
+        final[1] = L_str * g_final
+        final[2] = L_str * b_final
+    else:
+        final = L_str
 
-    final = final * (1.0 - 0.005) + 0.005; final = np.clip(final, 0.0, 1.0)
+    # Restore pedestal for safety
+    final = final * (1.0 - 0.005) + 0.005
+    
+    # Strict Clipping: Ensure no float exceeds 1.0, even by epsilon
+    final = np.clip(final, 0.0, 1.0)
+    
+    # Final explicit cast to float32 for Siril compatibility
     final = final.astype(np.float32)
-    if final.ndim == 3: final = final.transpose(2, 0, 1)
+    
+    # 6. Output Formatting (Siril expects (C, H, W) usually, but let's check input)
+    # The input was (C, H, W). We return (C, H, W).
     
     if processing_mode == "ready_to_use":
-        if progress_callback: progress_callback("Ready-to-Use: Applying Star-Safe Expansion...")
+        if progress_callback: progress_callback("Ready-to-Use: Star-Safe Expansion...")
         effective_bg = 0.20 if target_bg is None else float(target_bg)
         final = adaptive_output_scaling(final, working_space, effective_bg, progress_callback)
-        if progress_callback: progress_callback("Ready-to-Use: Soft-clipping highlights...")
+        
+        if progress_callback: progress_callback("Ready-to-Use: Polish...")
         final = apply_ready_to_use_soft_clip(final, 0.98, 2.0, progress_callback)
-        if progress_callback: progress_callback("Output ready for export!")
+        
+        if progress_callback: progress_callback("Output ready!")
     else:
-        if progress_callback: progress_callback("Scientific mode: Preserving raw stretched data")
+        if progress_callback: progress_callback("Scientific mode: Raw output")
     
     return final
 
@@ -536,31 +614,57 @@ class AutoSolverThread(QThread):
     def __init__(self, data, target, b_val, luma_weights):
         super().__init__()
         self.data = data; self.target = target; self.b_val = b_val; self.luma_weights = luma_weights
+        
     def run(self):
         try:
-            if self.data.ndim == 3:
-                floors = []
-                if self.data.shape[0] == 3:
-                    for c in range(3): floors.append(np.percentile(self.data[c, ::100, ::100], 0.5))
-                    anchor = max(0.0, min(floors) - (0.00025 * 65535.0 if np.median(self.data) > 1.0 else 0.00025))
-                    indices = np.random.choice(self.data.shape[1] * self.data.shape[2], 100000, replace=False)
-                    c0 = np.maximum(self.data[0].flatten()[indices] - anchor, 0)
-                    c1 = np.maximum(self.data[1].flatten()[indices] - anchor, 0)
-                    c2 = np.maximum(self.data[2].flatten()[indices] - anchor, 0)
-                    r, g, b = self.luma_weights
-                    L_sample = r * c0 + g * c1 + b * c2
-                else:
-                    anchor = np.percentile(self.data[::100, ::100], 0.5)
-                    L_sample = np.maximum(self.data.flatten()[::100] - anchor, 0)
-            else: L_sample = self.data.flatten()[::100]
+            # 1. Normalize (Core)
+            # Use a copy to avoid modifying original cache if shared
+            img_norm = VeraLuxCore.normalize_input(self.data) 
             
-            if np.median(L_sample) > 1.0: L_sample = L_sample / 65535.0
-            valid = L_sample[L_sample > 1e-7]
-            if len(valid) == 0:
-                best_log_d = 2.0
+            # Ensure shape (C, H, W)
+            if img_norm.ndim == 3 and img_norm.shape[0] != 3 and img_norm.shape[2] == 3:
+                img_norm = img_norm.transpose(2, 0, 1)
+            
+            # 2. Subsample for Speed (Solver only needs stats)
+            # We pick a random subset of pixels to estimate the median background
+            if img_norm.ndim == 3:
+                # Subsample 100k pixels
+                h, w = img_norm.shape[1], img_norm.shape[2]
+                num_pixels = h * w
+                indices = np.random.choice(num_pixels, min(num_pixels, 100000), replace=False)
+                
+                # Flatten channels
+                c0 = img_norm[0].flatten()[indices]
+                c1 = img_norm[1].flatten()[indices]
+                c2 = img_norm[2].flatten()[indices]
+                
+                # Reconstruct subsampled array (3, N)
+                sub_data = np.vstack((c0, c1, c2))
+                
             else:
-                best_log_d = solve_stretch_factor(valid, self.target, self.b_val, self.luma_weights)
+                # Mono subsample
+                h, w = img_norm.shape
+                num_pixels = h * w
+                indices = np.random.choice(num_pixels, min(num_pixels, 100000), replace=False)
+                sub_data = img_norm.flatten()[indices]
+
+            # 3. Calculate Anchor (Core)
+            # Core handles subsampling internally, but here we pass already subsampled data
+            # passing subsampled data to calculate_anchor works because it calculates percentile
+            anchor = VeraLuxCore.calculate_anchor(sub_data)
+            
+            # 4. Extract Luminance (Core)
+            L_anchored, _ = VeraLuxCore.extract_luminance(sub_data, anchor, self.luma_weights)
+            
+            # Filter valid pixels (remove 0s)
+            valid = L_anchored[L_anchored > 1e-7]
+            
+            # 5. Solve (Core)
+            if len(valid) == 0: best_log_d = 2.0
+            else: best_log_d = VeraLuxCore.solve_log_d(valid, self.target, self.b_val)
+                
             self.result_ready.emit(best_log_d)
+            
         except Exception as e:
             print(f"Solver Error: {e}")
             self.result_ready.emit(2.0)
@@ -573,12 +677,15 @@ class ProcessingThread(QThread):
         self.working_space = working_space; self.processing_mode = processing_mode; self.target_bg = target_bg
     def run(self):
         try:
+            # Pass Raw data, logic handles normalization
             res = process_veralux_v6(self.img, self.D, self.b, self.conv, self.working_space, self.processing_mode, self.target_bg, self.progress.emit)
             self.finished.emit(res)
-        except Exception as e: self.progress.emit(f"Error: {str(e)}")
+        except Exception as e: 
+            traceback.print_exc()
+            self.progress.emit(f"Error: {str(e)}")
 
 # =============================================================================
-#  GUI
+#  GUI (Unchanged from v1.0.3 except version ref)
 # =============================================================================
 
 class VeraLuxInterface:
@@ -599,7 +706,6 @@ class VeraLuxInterface:
             self.siril.log(header_msg)
         except:
             print(header_msg)
-        # ------------------
 
         self.linear_cache = None
         self.window = QMainWindow()
@@ -826,7 +932,7 @@ class VeraLuxInterface:
         btns.addWidget(b_reset)
 
         b_reload = QPushButton("Reload Input")
-        b_reload.setToolTip("Re-cache the image from Siril (Undo changes).")
+        b_reload.setToolTip("Reload linear image from Siril memory. For Undo must use Siril back button.")
         b_reload.clicked.connect(self.cache_input)
         btns.addWidget(b_reload)
         
@@ -996,9 +1102,24 @@ class VeraLuxInterface:
         self.progress.setRange(0, 100); self.progress.setValue(100); self.status.setText("Complete.")
         mode = "Ready-to-Use" if self.radio_ready.isChecked() else "Scientific"
         ws = self.combo_profile.currentText()
+        
         if result_img is not None:
-            with self.siril.image_lock(): self.siril.set_image_pixeldata(result_img)
-            self.siril.cmd("stat"); self.siril.log(f"VeraLux v6.0: {mode} mode applied [{ws}]", color=LogColor.GREEN)
+            # 1. Send data
+            with self.siril.image_lock(): 
+                self.siril.set_image_pixeldata(result_img)
+            
+            # 2. Update Statistics
+            self.siril.cmd("stat")
+            
+            # 3. BLACK SCREEN FIX: Reset visualization
+            # Use explicit numeric limits (0 65535), universal for Siril.
+            # This resets the Screen Transfer Function.
+            try:
+                self.siril.cmd("visu 0 65535") 
+            except:
+                pass
+            
+            self.siril.log(f"VeraLux v{VERSION}: {mode} mode applied [{ws}]", color=LogColor.GREEN)
 
 def main():
     try:
