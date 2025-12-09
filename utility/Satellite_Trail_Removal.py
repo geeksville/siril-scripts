@@ -84,7 +84,7 @@
 # 2.0.4 - (AKB) updated set_seq_frame_pixeldata() call for compatibility with sirilpy update
 #
 
-VERSION = "2.0.3"
+VERSION = "2.0.4"
 
 # --- Core Imports ---
 import sys
