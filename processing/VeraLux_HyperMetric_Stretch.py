@@ -8,7 +8,7 @@
 # (c) 2025 Riccardo Paterniti
 # VeraLux — HyperMetric Stretch
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Version 1.1.0 (Architecture Upgrade)
+# Version 1.2.0
 #
 # Credits / Origin
 # ----------------
@@ -37,29 +37,24 @@ Design Goals
 • Preserve original vector color ratios during extreme stretching (True Color)
 • Optimize Luminance extraction based on specific hardware (Sensor Profiles)
 • Provide a mathematically "Safe" expansion for high-dynamic targets
-• Eliminate the "flat look" of logarithmic stretches via Adaptive Scaling
-• Ensure rigorous data handling across any bit-depth topology (16/32-bit)
+• Bridge the gap between numerical processing and visual feedback (Live Preview)
+• Allow controlled hybrid tone-mapping for highlight management (Color Grip)
 
 Core Features
 -------------
-• Unified Math Core (v1.1.0):
-  - Implements a "Single Source of Truth" architecture. The Auto-Solver and 
-    the Main Processor share the exact same logic, guaranteeing that predicted 
-    background values match the final output with decimal precision.
-• Dual Processing Philosophy:
-  - Scientific Mode: 100% lossless, hard-clip at physical saturation (1.0), 
-    no post-processing. Ideal for photometry and pure data analysis.
-  - Ready-to-Use Mode: Applies "Star-Safe" expansion, Linked MTF optimization, 
-    and highlight soft-clipping. Delivers an aesthetic, export-ready image.
-• Hardware-Aware Color Science:
-  - Extensive database of sensors with precise Quantum Efficiency weights
-    derived from Siril's SPCC database.
+• Live Preview Engine (New in v1.2.0):
+  - Interactive floating window offering real-time feedback on parameter changes.
+  - Features Smart Proxy technology for fluid response even on massive files.
+  - Includes professional navigation controls (Zoom, Pan, Fit-to-Screen).
+• Hybrid Color Engine (Color Grip):
+  - Allows blending between Vector Preservation (Vivid) and Scalar Stretching (Soft).
+  - Gives users control over star core saturation without losing data fidelity.
+• Unified Math Core:
+  - Implements a "Single Source of Truth" architecture. The Auto-Solver, Live 
+    Preview, and Main Processor share the exact same logic.
 • Robust Input Normalization:
   - Automatically handles 8, 16, 32-bit Integer or 32-bit Float inputs, 
-    preventing clipping or black-point errors on high-dynamic range files.
-• Physics-Based Math:
-  - Log-GHS Engine: Generalized Hyperbolic Stretch focused on midtone contrast.
-  - Color Convergence: Controls the roll-off to white point for star cores.
+    preventing clipping errors on high-dynamic range files.
 
 Usage
 -----
@@ -67,8 +62,9 @@ Usage
 2. Setup: Select your Sensor Profile (or Rec.709) and Processing Mode.
    (Default is "Ready-to-Use" for immediate results).
 3. Calibrate: Click Calculate Optimal Log D (Auto-Solver) to analyze the 
-   linear data and find the mathematical sweet spot for the stretch.
-4. Refine: Adjust Stretch Power and Highlight Protection (b) if needed.
+   linear data and find the mathematical sweet spot.
+4. Refine (Interactive): Click [Live Preview] to open the visualizer.
+   Adjust Sliders (Log D, Protect b, Color Grip) and observe changes in real-time.
 5. Process: Click PROCESS.
    - The script automatically resets the display visualization to linear 
      to ensure the result is immediately visible and correctly scaled.
@@ -120,8 +116,10 @@ import math
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
                             QWidget, QLabel, QDoubleSpinBox, QSlider,
                             QPushButton, QGroupBox, QMessageBox, QProgressBar,
-                            QComboBox, QRadioButton, QButtonGroup, QCheckBox, QFrame)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+                            QComboBox, QRadioButton, QButtonGroup, QCheckBox, QFrame,
+                            QGraphicsView, QGraphicsScene, QGraphicsPixmapItem)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QEvent
+from PyQt6.QtGui import QImage, QPixmap, QPainter, QColor, QWheelEvent, QMouseEvent
 
 # ---------------------
 #  THEME & STYLING
@@ -161,8 +159,13 @@ QPushButton#ProcessButton { background-color: #285299; border: 1px solid #1e3f7a
 QPushButton#ProcessButton:hover { background-color: #355ea1; }
 QPushButton#AutoButton { background-color: #8c6a00; border: 1px solid #a37c00; }
 QPushButton#AutoButton:hover { background-color: #bfa100; color: #000000;}
+QPushButton#PreviewButton { background-color: #2a5a2a; border: 1px solid #408040; }
+QPushButton#PreviewButton:hover { background-color: #3a7a3a; }
 QPushButton#CloseButton { background-color: #5a2a2a; border: 1px solid #804040; }
 QPushButton#CloseButton:hover { background-color: #7a3a3a; }
+
+/* Preview Toolbar Buttons */
+QPushButton#ZoomBtn { min-width: 30px; font-weight: bold; background-color: #3c3c3c; }
 
 /* GHOST HELP BUTTON */
 QPushButton#HelpButton { 
@@ -180,10 +183,12 @@ QProgressBar { border: 1px solid #555555; border-radius: 3px; text-align: center
 QProgressBar::chunk { background-color: #285299; width: 10px; }
 """
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 # ------------------------------------------------------------------------------
 # VERSION HISTORY
 # ------------------------------------------------------------------------------
+# 1.2.0: Major Upgrade. Added Live Preview Engine with Smart Proxy technology.
+#        Introduced "Color Grip" Hybrid Stretch for star control.
 # 1.1.0: Architecture Upgrade. Introduced VeraLuxCore (Single Source of Truth).
 #        Fixed 32-bit/Mono input handling & visual refresh issues (visu reset).
 #        Added robust input normalization & improved Solver precision.
@@ -343,7 +348,7 @@ SENSOR_PROFILES = {
 DEFAULT_PROFILE = "Rec.709 (Recommended)"
 
 # =============================================================================
-#  CORE ENGINE (Single Source of Truth) - V1.1.0 Implementation
+#  CORE ENGINE (Single Source of Truth) - V1.2.0 Implementation
 # =============================================================================
 
 class VeraLuxCore:
@@ -394,7 +399,7 @@ class VeraLuxCore:
             if current_max <= 65535.0:
                 return img_float / 65535.0
                 
-            # Scenario D: Scaled to 32-bit [0-4.29B]
+            # Scenario D: Scaled to 32-bit [0-4.29B] (IL TUO CASO)
             # If > 65535, assume 32-bit scaling
             return img_float / 4294967295.0
             
@@ -591,6 +596,7 @@ def process_veralux_v6(img_data, log_D, protect_b, convergence_power,
                        working_space="Rec.709 (Standard)", 
                        processing_mode="ready_to_use",
                        target_bg=None,
+                       color_grip=1.0, # Added in v1.2.0
                        progress_callback=None):
     
     if progress_callback: progress_callback("Normalization & Analysis...")
@@ -598,12 +604,10 @@ def process_veralux_v6(img_data, log_D, protect_b, convergence_power,
     # 1. Normalize Input using Core
     img = VeraLuxCore.normalize_input(img_data)
     
-    # Ensure format is (Channels, H, W) for internal processing
-    # Siril usually gives (Channels, H, W). We stick to it.
+    # Ensure format is (Channels, H, W)
     if img.ndim == 2:
         pass # Mono
     elif img.ndim == 3 and img.shape[0] != 3 and img.shape[2] == 3:
-        # If by chance input is (H, W, 3), transpose to (3, H, W)
         img = img.transpose(2, 0, 1)
 
     luma_weights = SENSOR_PROFILES[working_space]['weights']
@@ -644,16 +648,27 @@ def process_veralux_v6(img_data, log_D, protect_b, convergence_power,
         final[0] = L_str * r_final
         final[1] = L_str * g_final
         final[2] = L_str * b_final
+        
+        # --- Hybrid Stretch Logic (Color Grip) ---
+        if color_grip < 1.0:
+            if progress_callback: progress_callback("Mixing Hybrid Scalar Stretch...")
+            # Calculate Scalar (Independent) stretch for blending
+            D_val = 10.0 ** log_D
+            scalar = np.zeros_like(final)
+            scalar[0] = VeraLuxCore.ghs_stretch(img_anchored[0], D_val, protect_b)
+            scalar[1] = VeraLuxCore.ghs_stretch(img_anchored[1], D_val, protect_b)
+            scalar[2] = VeraLuxCore.ghs_stretch(img_anchored[2], D_val, protect_b)
+            scalar = np.clip(scalar, 0.0, 1.0)
+            
+            # Blend: Final = Vector * Grip + Scalar * (1-Grip)
+            final = (final * color_grip) + (scalar * (1.0 - color_grip))
+            
     else:
         final = L_str
 
     # Restore pedestal for safety
     final = final * (1.0 - 0.005) + 0.005
-    
-    # Strict Clipping: Ensure no float exceeds 1.0, even by epsilon
     final = np.clip(final, 0.0, 1.0)
-    
-    # Final explicit cast to float32 for Siril compatibility
     final = final.astype(np.float32)
     
     # 6. Output Formatting (Siril expects (C, H, W) usually, but let's check input)
@@ -674,6 +689,111 @@ def process_veralux_v6(img_data, log_D, protect_b, convergence_power,
     return final
 
 # =============================================================================
+#  LIVE PREVIEW SYSTEM
+# =============================================================================
+
+class VeraLuxPreviewWindow(QWidget):
+    """
+    Independent Preview Window with Zoom Buttons and Double-Click Reset.
+    Stays on top.
+    """
+    def __init__(self, parent=None):
+        super().__init__()
+        self.setWindowTitle("VeraLux Live Preview")
+        self.resize(800, 600)
+        # FORCE ON TOP
+        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
+        self.setStyleSheet(DARK_STYLESHEET) 
+
+        # Main Layout
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        
+        # --- TOOLBAR (Top) ---
+        toolbar = QWidget()
+        toolbar.setStyleSheet("background-color: #333333; border-bottom: 1px solid #555555;")
+        tb_layout = QHBoxLayout(toolbar)
+        tb_layout.setContentsMargins(5, 5, 5, 5)
+        tb_layout.setSpacing(10)
+        
+        # Zoom Buttons
+        btn_in = QPushButton("+")
+        btn_in.setObjectName("ZoomBtn")
+        btn_in.setToolTip("Zoom In")
+        btn_in.clicked.connect(self.zoom_in)
+        
+        btn_out = QPushButton("-")
+        btn_out.setObjectName("ZoomBtn")
+        btn_out.setToolTip("Zoom Out")
+        btn_out.clicked.connect(self.zoom_out)
+        
+        btn_fit = QPushButton("Fit")
+        btn_fit.setObjectName("ZoomBtn")
+        btn_fit.setToolTip("Fit to Window (Double-Click Image)")
+        btn_fit.clicked.connect(self.fit_to_view)
+        
+        tb_layout.addWidget(btn_out)
+        tb_layout.addWidget(btn_fit)
+        tb_layout.addWidget(btn_in)
+        tb_layout.addStretch() # Push buttons to left
+        
+        layout.addWidget(toolbar)
+        
+        # --- GRAPHICS VIEW ---
+        self.scene = QGraphicsScene()
+        self.view = QGraphicsView(self.scene)
+        self.view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.view.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.view.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.view.setStyleSheet("background-color: #1e1e1e; border: none;")
+        
+        layout.addWidget(self.view)
+        
+        # Data container
+        self.pixmap_item = QGraphicsPixmapItem()
+        self.scene.addItem(self.pixmap_item)
+        self.processed_pixmap = None
+        
+        # Status Label overlay
+        self.lbl_info = QLabel("Loading...", self.view)
+        self.lbl_info.setStyleSheet("background-color: rgba(0,0,0,150); color: white; padding: 5px; border-radius: 3px;")
+        self.lbl_info.move(10, 10)
+        self.lbl_info.adjustSize()
+
+    def set_image(self, qimg):
+        """Updates the displayed image."""
+        pixmap = QPixmap.fromImage(qimg)
+        self.processed_pixmap = pixmap
+        self.pixmap_item.setPixmap(pixmap)
+        self.scene.setSceneRect(self.pixmap_item.boundingRect())
+        self.lbl_info.setText("Preview Updated")
+        self.lbl_info.adjustSize()
+
+    def fit_to_view(self):
+        """Fits image to window."""
+        if self.pixmap_item.pixmap():
+            self.view.fitInView(self.pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
+
+    def zoom_in(self):
+        self.view.scale(1.2, 1.2)
+
+    def zoom_out(self):
+        self.view.scale(1/1.2, 1/1.2)
+
+    def wheelEvent(self, event: QWheelEvent):
+        """Keep wheel zoom for mouse users."""
+        if event.angleDelta().y() > 0: self.zoom_in()
+        else: self.zoom_out()
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        """Reset view on double click."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.fit_to_view()
+
+# =============================================================================
 #  THREADING
 # =============================================================================
 
@@ -682,78 +802,54 @@ class AutoSolverThread(QThread):
     def __init__(self, data, target, b_val, luma_weights):
         super().__init__()
         self.data = data; self.target = target; self.b_val = b_val; self.luma_weights = luma_weights
-        
     def run(self):
         try:
-            # 1. Normalize (Core)
-            # Use a copy to avoid modifying original cache if shared
             img_norm = VeraLuxCore.normalize_input(self.data) 
-            
-            # Ensure shape (C, H, W)
             if img_norm.ndim == 3 and img_norm.shape[0] != 3 and img_norm.shape[2] == 3:
                 img_norm = img_norm.transpose(2, 0, 1)
             
-            # 2. Subsample for Speed (Solver only needs stats)
-            # We pick a random subset of pixels to estimate the median background
             if img_norm.ndim == 3:
-                # Subsample 100k pixels
                 h, w = img_norm.shape[1], img_norm.shape[2]
                 num_pixels = h * w
                 indices = np.random.choice(num_pixels, min(num_pixels, 100000), replace=False)
-                
-                # Flatten channels
                 c0 = img_norm[0].flatten()[indices]
                 c1 = img_norm[1].flatten()[indices]
                 c2 = img_norm[2].flatten()[indices]
-                
-                # Reconstruct subsampled array (3, N)
                 sub_data = np.vstack((c0, c1, c2))
-                
             else:
-                # Mono subsample
                 h, w = img_norm.shape
                 num_pixels = h * w
                 indices = np.random.choice(num_pixels, min(num_pixels, 100000), replace=False)
                 sub_data = img_norm.flatten()[indices]
 
-            # 3. Calculate Anchor (Core)
-            # Core handles subsampling internally, but here we pass already subsampled data
-            # passing subsampled data to calculate_anchor works because it calculates percentile
             anchor = VeraLuxCore.calculate_anchor(sub_data)
-            
-            # 4. Extract Luminance (Core)
             L_anchored, _ = VeraLuxCore.extract_luminance(sub_data, anchor, self.luma_weights)
-            
-            # Filter valid pixels (remove 0s)
             valid = L_anchored[L_anchored > 1e-7]
-            
-            # 5. Solve (Core)
             if len(valid) == 0: best_log_d = 2.0
             else: best_log_d = VeraLuxCore.solve_log_d(valid, self.target, self.b_val)
-                
             self.result_ready.emit(best_log_d)
-            
         except Exception as e:
             print(f"Solver Error: {e}")
             self.result_ready.emit(2.0)
 
 class ProcessingThread(QThread):
     finished = pyqtSignal(object); progress = pyqtSignal(str)
-    def __init__(self, img, D, b, conv, working_space, processing_mode, target_bg):
+    def __init__(self, img, D, b, conv, working_space, processing_mode, target_bg, color_grip):
         super().__init__()
         self.img = img; self.D = D; self.b = b; self.conv = conv
         self.working_space = working_space; self.processing_mode = processing_mode; self.target_bg = target_bg
+        self.color_grip = color_grip
     def run(self):
         try:
             # Pass Raw data, logic handles normalization
-            res = process_veralux_v6(self.img, self.D, self.b, self.conv, self.working_space, self.processing_mode, self.target_bg, self.progress.emit)
+            res = process_veralux_v6(self.img, self.D, self.b, self.conv, self.working_space, self.processing_mode, self.target_bg, self.color_grip, self.progress.emit)
             self.finished.emit(res)
         except Exception as e: 
             traceback.print_exc()
             self.progress.emit(f"Error: {str(e)}")
 
 # =============================================================================
-#  GUI (Unchanged from v1.0.3 except version ref)
+#  GUI
 # =============================================================================
 
 class VeraLuxInterface:
@@ -776,13 +872,16 @@ class VeraLuxInterface:
             print(header_msg)
 
         self.linear_cache = None
-        self.window = QMainWindow()
-        self.window.setWindowTitle(f"VeraLux v{VERSION}")
+        self.preview_proxy = None # Low-res copy for preview
+        self.preview_window = None
         
-        # --- FIX: Set Fusion Style for Windows Geometry + Apply Dark Theme ---
+        self.window = QMainWindow()
+        # Clean Exit handler
+        self.window.closeEvent = self.handle_close_event
+        
+        self.window.setWindowTitle(f"VeraLux v{VERSION}")
         self.app.setStyle("Fusion") 
         self.window.setStyleSheet(DARK_STYLESHEET)
-        
         self.window.setMinimumWidth(620) 
         self.window.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
         central = QWidget()
@@ -790,31 +889,21 @@ class VeraLuxInterface:
         layout = QVBoxLayout(central)
         layout.setSpacing(8) 
         
-        # Header Title
+        # Header
         head_title = QLabel(f"VeraLux HyperMetric Stretch v{VERSION}")
         head_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         head_title.setStyleSheet("font-size: 14pt; font-weight: bold; color: #88aaff;")
         layout.addWidget(head_title)
-
-        # Subtitle
-        head_sub = QLabel("Photometric Hyperbolic Stretch Engine")
-        head_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        head_sub.setStyleSheet("font-size: 12pt; font-weight: normal; color: #88aaff;")
-        layout.addWidget(head_sub)
         
         subhead = QLabel("Requirement: Linear Data • Color Calibration (SPCC) Applied")
         subhead.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subhead.setStyleSheet("font-size: 9pt; color: #999999; font-style: italic; margin-bottom: 5px;")
         layout.addWidget(subhead)
         
-        # --- TOP ROW: 0. Mode & 1. Sensor ---
-        top_row = QHBoxLayout()
-        
-        # 0. PROCESSING MODE
+        # --- GUI BLOCKS ---
+        # 0. Mode
         grp_mode = QGroupBox("0. Processing Mode")
         l_mode = QVBoxLayout(grp_mode)
-        
-        # Define Ready-to-Use FIRST
         self.radio_ready = QRadioButton("Ready-to-Use (Aesthetic)")
         self.radio_ready.setToolTip(
             "<b>Ready-to-Use Mode:</b><br>"
@@ -823,8 +912,6 @@ class VeraLuxInterface:
             "• Applies Linked MTF to set background.<br>"
             "• Soft-clips highlights to reduce star blooming."
         )
-        
-        # Define Scientific SECOND
         self.radio_scientific = QRadioButton("Scientific (Preserve)")
         self.radio_scientific.setToolTip(
             "<b>Scientific Mode:</b><br>"
@@ -832,27 +919,17 @@ class VeraLuxInterface:
             "• Clips only at physical saturation (1.0).<br>"
             "• Ideal for photometry or manual tone mapping (Curves/GHS)."
         )
-        
-        # Default Checked
         self.radio_ready.setChecked(True) 
-        
         self.mode_group = QButtonGroup()
         self.mode_group.addButton(self.radio_ready, 0)
         self.mode_group.addButton(self.radio_scientific, 1)
-        
-        # Add to Layout: Ready FIRST
         l_mode.addWidget(self.radio_ready)
         l_mode.addWidget(self.radio_scientific)
-        
-        self.label_mode_info = QLabel()
-        self.label_mode_info.setWordWrap(True)
-        self.label_mode_info.setStyleSheet("color: #999999; font-size: 9pt; margin-top: 2px;")
-        self.update_mode_info()
+        self.label_mode_info = QLabel("✓ Ready-to-Use selected")
+        self.label_mode_info.setStyleSheet("color: #999999; font-size: 9pt;")
         l_mode.addWidget(self.label_mode_info)
-        self.radio_ready.toggled.connect(self.update_mode_info)
-        top_row.addWidget(grp_mode)
         
-        # 1. SENSOR CALIBRATION (Renamed)
+        # 1. Sensor
         grp_space = QGroupBox("1. Sensor Calibration")
         l_space = QVBoxLayout(grp_space)
         l_combo = QHBoxLayout()
@@ -865,24 +942,23 @@ class VeraLuxInterface:
         )
         for profile_name in SENSOR_PROFILES.keys(): self.combo_profile.addItem(profile_name)
         self.combo_profile.setCurrentText(DEFAULT_PROFILE)
-        self.combo_profile.currentTextChanged.connect(self.update_profile_info)
         l_combo.addWidget(self.combo_profile)
         l_space.addLayout(l_combo)
-        self.label_profile_info = QLabel("")
-        self.label_profile_info.setWordWrap(True)
-        self.label_profile_info.setStyleSheet("color: #999999; font-size: 9pt; padding: 2px;")
+        self.label_profile_info = QLabel("Rec.709 Standard")
+        self.label_profile_info.setStyleSheet("color: #999999; font-size: 9pt;")
         l_space.addWidget(self.label_profile_info)
-        top_row.addWidget(grp_space)
         
+        top_row = QHBoxLayout()
+        top_row.addWidget(grp_mode); top_row.addWidget(grp_space)
         layout.addLayout(top_row)
         
-        # --- 2. STRETCH ENGINE & CALIBRATION (Merged) ---
+        # 2. Stretch & Calibration
         grp_combined = QGroupBox("2. Stretch Engine & Calibration")
         l_combined = QVBoxLayout(grp_combined)
         
-        # A. CALIBRATION SUB-SECTION
+        # Target + Auto Button + Preview Button
         l_calib = QHBoxLayout()
-        l_calib.addWidget(QLabel("Target Background:"))
+        l_calib.addWidget(QLabel("Target Bg:"))
         self.spin_target = QDoubleSpinBox()
         self.spin_target.setToolTip(
             "<b>Target Background (Median):</b><br>"
@@ -893,14 +969,7 @@ class VeraLuxInterface:
         self.spin_target.setRange(0.05, 0.50); self.spin_target.setValue(0.20); self.spin_target.setSingleStep(0.01)
         l_calib.addWidget(self.spin_target)
         
-        self.slide_target = QSlider(Qt.Orientation.Horizontal)
-        self.slide_target.setToolTip("Adjust target background level")
-        self.slide_target.setRange(5, 50); self.slide_target.setValue(20)
-        self.slide_target.valueChanged.connect(lambda v: self.spin_target.setValue(v/100.0))
-        self.spin_target.valueChanged.connect(lambda v: self.slide_target.setValue(int(v*100)))
-        l_calib.addWidget(self.slide_target)
-        
-        self.btn_auto = QPushButton("⚡ Auto-Calculate Log D")
+        self.btn_auto = QPushButton("⚡ Auto-Calc Log D")
         self.btn_auto.setToolTip(
             "<b>Auto-Solver:</b><br>"
             "Analyzes the image data to find the <b>Stretch Factor (Log D)</b><br>"
@@ -910,15 +979,17 @@ class VeraLuxInterface:
         self.btn_auto.clicked.connect(self.run_solver)
         l_calib.addWidget(self.btn_auto)
         
-        l_combined.addLayout(l_calib)
+        self.btn_preview = QPushButton("👁️ Live Preview")
+        self.btn_preview.setObjectName("PreviewButton")
+        self.btn_preview.setToolTip("Toggle Real-Time Interactive Preview Window")
+        self.btn_preview.clicked.connect(self.toggle_preview)
+        l_calib.addWidget(self.btn_preview)
         
-        # Separator
+        l_combined.addLayout(l_calib)
         l_combined.addSpacing(5)
         
-        # B. MANUAL ENGINE SUB-SECTION
+        # Manual Sliders
         l_manual = QHBoxLayout()
-        
-        # Log D
         l_manual.addWidget(QLabel("Log D:"))
         self.spin_d = QDoubleSpinBox()
         self.spin_d.setToolTip(
@@ -926,19 +997,11 @@ class VeraLuxInterface:
             "Controls the strength of the stretch."
         )
         self.spin_d.setRange(0.0, 7.0); self.spin_d.setValue(2.0); self.spin_d.setDecimals(2); self.spin_d.setSingleStep(0.1)
-        
         self.slide_d = QSlider(Qt.Orientation.Horizontal)
         self.slide_d.setRange(0, 700); self.slide_d.setValue(200)
-        self.slide_d.valueChanged.connect(lambda v: self.spin_d.setValue(v/100.0))
-        self.spin_d.valueChanged.connect(lambda v: self.slide_d.setValue(int(v*100)))
+        l_manual.addWidget(self.spin_d); l_manual.addWidget(self.slide_d)
         
-        l_manual.addWidget(self.spin_d)
-        l_manual.addWidget(self.slide_d)
-        
-        # Spacer
         l_manual.addSpacing(15)
-        
-        # Protection b
         l_manual.addWidget(QLabel("Protect b:"))
         self.spin_b = QDoubleSpinBox()
         self.spin_b.setToolTip(
@@ -947,12 +1010,10 @@ class VeraLuxInterface:
         )
         self.spin_b.setRange(0.1, 15.0); self.spin_b.setValue(6.0); self.spin_b.setSingleStep(0.1)
         l_manual.addWidget(self.spin_b)
-        
         l_combined.addLayout(l_manual)
-        
         layout.addWidget(grp_combined)
         
-        # 3. PHYSICS
+        # 3. Physics
         grp_phys = QGroupBox("3. Physics & Convergence")
         l_phys = QVBoxLayout(grp_phys)
         l_conv = QHBoxLayout()
@@ -967,6 +1028,27 @@ class VeraLuxInterface:
         self.spin_conv.setRange(1.0, 10.0); self.spin_conv.setValue(3.5)
         l_conv.addWidget(self.spin_conv)
         l_phys.addLayout(l_conv)
+        
+        # Color Grip Slider
+        l_grip = QHBoxLayout()
+        l_grip.addWidget(QLabel("Chromatic Preservation (Color Grip):"))
+        self.spin_grip = QDoubleSpinBox()
+        self.spin_grip.setToolTip(
+            "<b>Color Grip:</b> Controls the rigor of Color Vector preservation.<br>"
+            "• <b>1.00 (Default):</b> Pure VeraLux. 100% Vector lock. Maximum vividness.<br>"
+            "• <b>< 1.00:</b> Blends with standard Scalar stretch. Softens star cores and relaxes saturation in highlights."
+        )
+        self.spin_grip.setRange(0.0, 1.0); self.spin_grip.setValue(1.0); self.spin_grip.setSingleStep(0.05)
+        self.slide_grip = QSlider(Qt.Orientation.Horizontal)
+        self.slide_grip.setRange(0, 100); self.slide_grip.setValue(100)
+        
+        # Sync Grip
+        self.slide_grip.valueChanged.connect(lambda v: self.spin_grip.setValue(v/100.0))
+        self.spin_grip.valueChanged.connect(lambda v: self.slide_grip.setValue(int(v*100)))
+        
+        l_grip.addWidget(self.spin_grip); l_grip.addWidget(self.slide_grip)
+        l_phys.addLayout(l_grip)
+        
         layout.addWidget(grp_phys)
         
         # Footer
@@ -976,53 +1058,163 @@ class VeraLuxInterface:
         self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.status)
         
+        # Buttons
         btns = QHBoxLayout()
-        
-        # Help Button
-        self.btn_help = QPushButton("?")
-        self.btn_help.setObjectName("HelpButton")
+        self.btn_help = QPushButton("?"); self.btn_help.setObjectName("HelpButton"); self.btn_help.setFixedWidth(20)
         self.btn_help.setToolTip("Print Operational Guide to Siril Console")
-        self.btn_help.setFixedWidth(20)
-        self.btn_help.clicked.connect(self.print_help_to_console)
-        btns.addWidget(self.btn_help)
-        
-        # Always on top Toggle
-        self.chk_ontop = QCheckBox("Always on top")
+        self.chk_ontop = QCheckBox("Always on top"); self.chk_ontop.setChecked(True)
         self.chk_ontop.setToolTip("Keep this window above Siril")
-        self.chk_ontop.setChecked(True)
-        self.chk_ontop.toggled.connect(self.toggle_ontop)
-        btns.addWidget(self.chk_ontop)
-        
-        # SPLIT RESET/RELOAD
-        b_reset = QPushButton("Default Settings")
+        b_reset = QPushButton("Defaults")
         b_reset.setToolTip("Reset all sliders and dropdowns to default values.")
-        b_reset.clicked.connect(self.set_defaults)
-        btns.addWidget(b_reset)
-
         b_reload = QPushButton("Reload Input")
         b_reload.setToolTip("Reload linear image from Siril memory. For Undo must use Siril back button.")
-        b_reload.clicked.connect(self.cache_input)
-        btns.addWidget(b_reload)
-        
-        b_proc = QPushButton("PROCESS")
-        b_proc.setObjectName("ProcessButton")
+        b_proc = QPushButton("PROCESS"); b_proc.setObjectName("ProcessButton")
         b_proc.setToolTip("Apply the stretch to the image.")
-        b_proc.clicked.connect(self.run_process)
-        btns.addWidget(b_proc)
+        b_close = QPushButton("Close"); b_close.setObjectName("CloseButton")
         
-        b_close = QPushButton("Close")
-        b_close.setObjectName("CloseButton")
-        b_close.clicked.connect(self.window.close)
-        btns.addWidget(b_close)
-        
+        btns.addWidget(self.btn_help); btns.addWidget(self.chk_ontop)
+        btns.addWidget(b_reset); btns.addWidget(b_reload); btns.addWidget(b_proc); btns.addWidget(b_close)
         layout.addLayout(btns)
+        
+        # CONNECT SIGNALS
+        self.chk_ontop.toggled.connect(self.toggle_ontop)
+        self.btn_help.clicked.connect(self.print_help_to_console)
+        b_reset.clicked.connect(self.set_defaults)
+        b_reload.clicked.connect(self.cache_input)
+        b_proc.clicked.connect(self.run_process)
+        b_close.clicked.connect(self.window.close)
+        
+        # Sync Sliders
+        self.slide_d.valueChanged.connect(lambda v: self.spin_d.setValue(v/100.0))
+        self.spin_d.valueChanged.connect(lambda v: self.slide_d.setValue(int(v*100)))
+        
+        self.radio_ready.toggled.connect(self.update_mode_info)
+        self.combo_profile.currentTextChanged.connect(self.update_profile_info)
+        
+        # LIVE PREVIEW CONNECTIONS (Debounced)
+        self.debounce_timer = QTimer()
+        self.debounce_timer.setSingleShot(True)
+        self.debounce_timer.setInterval(150) # 150ms delay
+        self.debounce_timer.timeout.connect(self.update_preview_image)
+        
+        # Trigger preview update on changes
+        for widget in [self.spin_d, self.spin_b, self.spin_conv, self.spin_target, self.spin_grip]:
+            widget.valueChanged.connect(self.trigger_preview_update)
+        self.combo_profile.currentTextChanged.connect(self.trigger_preview_update)
+        self.radio_ready.toggled.connect(self.trigger_preview_update)
+        self.slide_d.valueChanged.connect(self.trigger_preview_update)
+        self.slide_grip.valueChanged.connect(self.trigger_preview_update)
+
         self.update_profile_info(DEFAULT_PROFILE)
         self.window.show()
         self.center_window()
         self.cache_input() # Initial cache
 
+    # --- LIVE PREVIEW LOGIC ---
+    
+    def toggle_preview(self):
+        if not self.preview_window:
+            self.preview_window = VeraLuxPreviewWindow()
+        
+        if self.preview_window.isVisible():
+            self.preview_window.hide()
+        else:
+            if self.preview_proxy is None:
+                self.prepare_preview_proxy()
+            self.preview_window.show()
+            self.preview_window.raise_()
+            self.preview_window.activateWindow()
+            self.update_preview_image()
+            self.preview_window.fit_to_view()
+
+    def prepare_preview_proxy(self):
+        """Creates a high-quality downsampled version of the image for fast preview."""
+        if self.linear_cache is None: return
+        
+        # Smart Downsample (Max 1600px long edge)
+        # We need to maintain (C, H, W) format
+        img = VeraLuxCore.normalize_input(self.linear_cache)
+        if img.ndim == 3 and img.shape[0] != 3 and img.shape[2] == 3:
+            img = img.transpose(2, 0, 1) # Ensure (C, H, W)
+            
+        h = img.shape[1] if img.ndim == 3 else img.shape[0]
+        w = img.shape[2] if img.ndim == 3 else img.shape[1]
+        
+        scale = 1600 / max(h, w)
+        if scale >= 1.0:
+            self.preview_proxy = img # Use original if small
+        else:
+            # Simple slicing for speed (block reduce is better but requires scipy/skimage)
+            step = int(1 / scale)
+            if img.ndim == 3:
+                self.preview_proxy = img[:, ::step, ::step]
+            else:
+                self.preview_proxy = img[::step, ::step]
+
+    def trigger_preview_update(self):
+        """Starts timer to update preview (Debouncing)."""
+        if self.preview_window and self.preview_window.isVisible():
+            self.debounce_timer.start()
+
+    def update_preview_image(self):
+        """Runs the math on the proxy and updates the window."""
+        if self.preview_proxy is None: return
+        
+        # Gather params
+        D = self.spin_d.value()
+        b = self.spin_b.value()
+        conv = self.spin_conv.value()
+        grip = self.spin_grip.value()
+        ws = self.combo_profile.currentText()
+        target_bg = self.spin_target.value()
+        mode = "ready_to_use" if self.radio_ready.isChecked() else "scientific"
+        
+        # Run Core Math on Proxy
+        # We assume VeraLuxCore logic handles the shape correctly
+        res = process_veralux_v6(self.preview_proxy.copy(), D, b, conv, ws, mode, target_bg, grip, None)
+        
+        # Convert to Display
+        qimg = self.numpy_to_qimage(res)
+        self.preview_window.set_image(qimg)
+
+    def numpy_to_qimage(self, img_data):
+        """Converts float32 (C,H,W) to QImage for display."""
+        # Convert to (H,W,C) for QImage
+        if img_data.ndim == 3:
+            disp = img_data.transpose(1, 2, 0)
+        else:
+            disp = img_data
+            
+        # Clip and Scale to 8-bit (Processed data is linear 0-1)
+        disp = np.clip(disp * 255.0, 0, 255).astype(np.uint8)     
+        disp = np.flipud(disp)
+
+        # Force contiguous memory
+        disp = np.ascontiguousarray(disp)
+        
+        h, w = disp.shape[0], disp.shape[1]
+        bytes_per_line = disp.strides[0]
+        data_bytes = disp.data.tobytes()
+        
+        if disp.ndim == 2: # Mono
+            qimg = QImage(data_bytes, w, h, bytes_per_line, QImage.Format.Format_Grayscale8)
+        else: # RGB
+            if disp.shape[2] == 3:
+                qimg = QImage(data_bytes, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+            else:
+                return QImage()
+                
+        return qimg.copy()
+
+    # --- STANDARD METHODS ---
+
+    def handle_close_event(self, event):
+        """Ensures the preview window closes when the main window closes."""
+        if self.preview_window:
+            self.preview_window.close()
+        event.accept()
+
     def print_help_to_console(self):
-        """Prints the operational guide to the Siril console line by line to avoid truncation."""
         guide_lines = [
             "\n-------------------------------------------------------------\n"
             "VeraLux HyperMetric Stretch — OPERATIONAL GUIDE\n"
@@ -1059,7 +1251,9 @@ class VeraLuxInterface:
             "                  - Lower (<2.0): Brighter highlights but higher risk of bloating.\n"
             "                • Star Recovery (White Point): Controls Color Convergence.\n"
             "                  - Determines how fast a saturated core fades to pure white.\n"
-            "                  - Increase this if you see \"donut\" artifacts or holes in stars.\n\n"
+            "                  - Increase this if you see \"donut\" artifacts or holes in stars.\n"
+            "                • Color Grip: Controls vector strictness in highlights.\n"
+            "                  - 1.0: Pure Vector (Vivid). < 1.0: Hybrid (Softer Stars).\n\n"
             "",
             "   D. EXECUTION & RESET\n"
             "                • [Default Settings]: Resets only sliders/menus to factory defaults.\n"
@@ -1069,11 +1263,8 @@ class VeraLuxInterface:
             "Support & Info: info@veralux.space\n"
             "-------------------------------------------------------------"
         ]
-        
         try:
-            # Iterate and print line by line to avoid buffer limits
-            for line in guide_lines:
-                self.siril.log(line)
+            for line in guide_lines: self.siril.log(line)
             self.status.setText("Guide printed to Console.")
         except:
             print("\n".join(guide_lines))
@@ -1094,36 +1285,20 @@ class VeraLuxInterface:
 
     def update_mode_info(self):
         if self.radio_ready.isChecked():
-            text = ("✓ Star-Safe Expansion\n"
-                   "✓ Linked MTF Stretch\n"
-                   "✓ Soft-clip highlights\n"
-                   "✓ Ready for export")
+            self.label_mode_info.setText("✓ Ready-to-Use: Star-Safe expansion + MTF + Soft Clip")
         else:
-            text = ("✓ Pure GHS stretch (1.0)\n"
-                   "✓ Manual tone mapping\n"
-                   "✓ Lossless data\n"
-                   "✓ Accurate for scientific")
-        self.label_mode_info.setText(text)
+            self.label_mode_info.setText("✓ Scientific: Pure GHS (1.0), preserved vectors, no clip")
 
     def update_profile_info(self, profile_name):
         if profile_name in SENSOR_PROFILES:
             profile = SENSOR_PROFILES[profile_name]
             r, g, b = profile['weights']
-            text = f"{profile['description']}\n"
-            text += f"Weights: R={r:.4f}, G={g:.4f}, B={b:.4f}\n"
-            text += f"💡 {profile['info']}"
-            self.label_profile_info.setText(text)
+            self.label_profile_info.setText(f"{profile['description']} (R:{r:.2f} G:{g:.2f} B:{b:.2f})")
 
     def set_defaults(self):
-        """Resets all GUI elements to default values."""
-        self.spin_d.setValue(2.0)
-        self.spin_b.setValue(6.0)
-        self.spin_target.setValue(0.20)
-        self.spin_conv.setValue(3.5)
-        self.combo_profile.setCurrentText(DEFAULT_PROFILE)
-        self.radio_ready.setChecked(True) # Default
-        self.chk_ontop.setChecked(True)
-        self.status.setText("Settings reset to defaults.")
+        self.spin_d.setValue(2.0); self.spin_b.setValue(6.0); self.spin_target.setValue(0.20)
+        self.spin_conv.setValue(3.5); self.spin_grip.setValue(1.0); self.combo_profile.setCurrentText(DEFAULT_PROFILE)
+        self.radio_ready.setChecked(True)
 
     def cache_input(self):
         try:
@@ -1135,6 +1310,10 @@ class VeraLuxInterface:
             else:
                 self.status.setText("Input Cached.")
                 self.siril.log("VeraLux: Input Cached.", color=LogColor.GREEN)
+                self.preview_proxy = None # Invalidate preview cache
+                if self.preview_window and self.preview_window.isVisible():
+                    self.prepare_preview_proxy()
+                    self.update_preview_image()
         except Exception as e: self.status.setText("Connection Error."); print(e)
 
     def run_solver(self):
@@ -1158,10 +1337,11 @@ class VeraLuxInterface:
         except: pass
         D = self.spin_d.value(); b = self.spin_b.value(); conv = self.spin_conv.value()
         ws = self.combo_profile.currentText(); t_bg = self.spin_target.value()
+        grip = self.spin_grip.value()
         mode = "ready_to_use" if self.radio_ready.isChecked() else "scientific"
         self.status.setText("Processing..."); self.progress.setRange(0, 0)
         img_copy = self.linear_cache.copy()
-        self.worker = ProcessingThread(img_copy, D, b, conv, ws, mode, t_bg)
+        self.worker = ProcessingThread(img_copy, D, b, conv, ws, mode, t_bg, grip)
         self.worker.progress.connect(self.status.setText)
         self.worker.finished.connect(self.finish_process)
         self.worker.start()
@@ -1170,23 +1350,11 @@ class VeraLuxInterface:
         self.progress.setRange(0, 100); self.progress.setValue(100); self.status.setText("Complete.")
         mode = "Ready-to-Use" if self.radio_ready.isChecked() else "Scientific"
         ws = self.combo_profile.currentText()
-        
         if result_img is not None:
-            # 1. Send data
-            with self.siril.image_lock(): 
-                self.siril.set_image_pixeldata(result_img)
-            
-            # 2. Update Statistics
+            with self.siril.image_lock(): self.siril.set_image_pixeldata(result_img)
             self.siril.cmd("stat")
-            
-            # 3. BLACK SCREEN FIX: Reset visualization
-            # Use explicit numeric limits (0 65535), universal for Siril.
-            # This resets the Screen Transfer Function.
-            try:
-                self.siril.cmd("visu 0 65535") 
-            except:
-                pass
-            
+            try: self.siril.cmd("visu 0 65535") 
+            except: pass
             self.siril.log(f"VeraLux v{VERSION}: {mode} mode applied [{ws}]", color=LogColor.GREEN)
 
 def main():
