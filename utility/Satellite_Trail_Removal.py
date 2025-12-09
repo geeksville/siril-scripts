@@ -81,6 +81,7 @@
 # 2.0.1 - Added Icon App
 # 2.0.2 - Fixed CFA pattern detection
 # 2.0.3 - Improved UI layout for Mode and Reference file display
+# 2.0.4 - (AKB) updated set_seq_frame_pixeldata() call for compatibility with sirilpy update
 #
 
 VERSION = "2.0.3"
@@ -2654,7 +2655,7 @@ class TrailRemovalAPP(QWidget):
             # with fits.open(backup_file, mode="readonly") as hdul:
             #     backup_data = hdul[0].data.copy()
             # # Rewrite the current frame with the backup data
-            # self.siril.set_seq_frame_pixeldata(curr, backup_data)
+            # self.siril.set_seq_frame_pixeldata(curr, backup_data, prefix=None)
 
             # Use shutil.copy to overwrite the original file with the backup.
             # This is safer than reading and rewriting data with set_seq_frame_pixeldata.
@@ -3169,7 +3170,10 @@ class TrailRemovalAPP(QWidget):
                             self.siril.log(f"Backup created: {backup_file_path}", s.LogColor.GREEN)
 
                         # Now overwrite the current frame with the changed data
-                        self.siril.set_seq_frame_pixeldata(curr, final_image_data)
+                        # TODO: for compatibility with sirilpy updates and equivalence with v2.0.3 I have set prefix=None
+                        # This should be reviewed by the script author to confirm whether overwriting the sequence is optimum
+                        # or if he prefers that a new sequence with a different prefix is made.
+                        self.siril.set_seq_frame_pixeldata(curr, final_image_data, prefix=None)
                         self.siril.log(f"Frame {curr + 1} overwritten with corrected data.", s.LogColor.BLUE)
 
                     except Exception as e:
