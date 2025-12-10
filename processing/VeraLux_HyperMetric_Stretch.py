@@ -8,12 +8,12 @@
 # (c) 2025 Riccardo Paterniti
 # VeraLux — HyperMetric Stretch
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Version 1.2.0
+# Version 1.2.1
 #
 # Credits / Origin
 # ----------------
 #   • Inspired by: The "True Color" methodology of Dr. Roger N. Clark
-#   • Math basis: Generalized Hyperbolic Stretch (GHS) & Vector Color Preservation
+#   • Math basis: Inverse Hyperbolic Stretch (IHS) & Vector Color Preservation
 #   • Sensor Science: Hardware-specific Quantum Efficiency weighting
 #
 
@@ -42,7 +42,7 @@ Design Goals
 
 Core Features
 -------------
-• Live Preview Engine (New in v1.2.0):
+• Live Preview Engine:
   - Interactive floating window offering real-time feedback on parameter changes.
   - Features Smart Proxy technology for fluid response even on massive files.
   - Includes professional navigation controls (Zoom, Pan, Fit-to-Screen).
@@ -183,10 +183,12 @@ QProgressBar { border: 1px solid #555555; border-radius: 3px; text-align: center
 QProgressBar::chunk { background-color: #285299; width: 10px; }
 """
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 # ------------------------------------------------------------------------------
 # VERSION HISTORY
 # ------------------------------------------------------------------------------
+# 1.2.1: Nomenclature refinement. Replaced generic GHS terms with accurate
+#        "Inverse Hyperbolic Stretch" definitions. Minor UI text polish.
 # 1.2.0: Major Upgrade. Added Live Preview Engine with Smart Proxy technology.
 #        Introduced "Color Grip" Hybrid Stretch for star control.
 # 1.1.0: Architecture Upgrade. Introduced VeraLuxCore (Single Source of Truth).
@@ -348,7 +350,7 @@ SENSOR_PROFILES = {
 DEFAULT_PROFILE = "Rec.709 (Recommended)"
 
 # =============================================================================
-#  CORE ENGINE (Single Source of Truth) - V1.2.0 Implementation
+#  CORE ENGINE (Single Source of Truth) - V1.2.1 Implementation
 # =============================================================================
 
 class VeraLuxCore:
@@ -453,8 +455,11 @@ class VeraLuxCore:
         return L_anchored, img_anchored
 
     @staticmethod
-    def ghs_stretch(data, D, b, SP=0.0):
-        """Generalized Hyperbolic Stretch Formula."""
+    def hyperbolic_stretch(data, D, b, SP=0.0):
+        """
+        Inverse Hyperbolic Stretch (arcsinh).
+        Parametric implementation of the inverse hyperbolic sine function.
+        """
         D = max(D, 0.1)
         b = max(b, 0.1)
         term1 = np.arcsinh(D * (data - SP) + b)
@@ -475,7 +480,7 @@ class VeraLuxCore:
         for _ in range(40):
             mid_log = (low_log + high_log) / 2.0
             mid_D = 10.0 ** mid_log
-            test_val = VeraLuxCore.ghs_stretch(median_in, mid_D, b_val)
+            test_val = VeraLuxCore.hyperbolic_stretch(median_in, mid_D, b_val)
             
             if abs(test_val - target_median) < 0.0001:
                 best_log_D = mid_log; break
@@ -630,9 +635,9 @@ def process_veralux_v6(img_data, log_D, protect_b, convergence_power,
         g_ratio = img_anchored[1] / L_safe
         b_ratio = img_anchored[2] / L_safe
 
-    # 4. Stretch using Core GHS
+    # 4. Stretch using Core Hyperbolic Stretch
     if progress_callback: progress_callback(f"Stretching (Log D={log_D:.2f})...")
-    L_str = VeraLuxCore.ghs_stretch(L_anchored, 10.0 ** log_D, protect_b)
+    L_str = VeraLuxCore.hyperbolic_stretch(L_anchored, 10.0 ** log_D, protect_b)
     L_str = np.clip(L_str, 0.0, 1.0)
     
     # 5. Dynamic Color Convergence
@@ -655,9 +660,9 @@ def process_veralux_v6(img_data, log_D, protect_b, convergence_power,
             # Calculate Scalar (Independent) stretch for blending
             D_val = 10.0 ** log_D
             scalar = np.zeros_like(final)
-            scalar[0] = VeraLuxCore.ghs_stretch(img_anchored[0], D_val, protect_b)
-            scalar[1] = VeraLuxCore.ghs_stretch(img_anchored[1], D_val, protect_b)
-            scalar[2] = VeraLuxCore.ghs_stretch(img_anchored[2], D_val, protect_b)
+            scalar[0] = VeraLuxCore.hyperbolic_stretch(img_anchored[0], D_val, protect_b)
+            scalar[1] = VeraLuxCore.hyperbolic_stretch(img_anchored[1], D_val, protect_b)
+            scalar[2] = VeraLuxCore.hyperbolic_stretch(img_anchored[2], D_val, protect_b)
             scalar = np.clip(scalar, 0.0, 1.0)
             
             # Blend: Final = Vector * Grip + Scalar * (1-Grip)
@@ -917,7 +922,7 @@ class VeraLuxInterface:
             "<b>Scientific Mode:</b><br>"
             "Produces a 100% mathematically consistent output.<br>"
             "• Clips only at physical saturation (1.0).<br>"
-            "• Ideal for photometry or manual tone mapping (Curves/GHS)."
+            "• Ideal for manual tone mapping (Curves/Hyperbolic)."
         )
         self.radio_ready.setChecked(True) 
         self.mode_group = QButtonGroup()
@@ -993,7 +998,7 @@ class VeraLuxInterface:
         l_manual.addWidget(QLabel("Log D:"))
         self.spin_d = QDoubleSpinBox()
         self.spin_d.setToolTip(
-            "<b>GHS Intensity (Log D):</b><br>"
+            "<b>Hyperbolic Intensity (Log D):</b><br>"
             "Controls the strength of the stretch."
         )
         self.spin_d.setRange(0.0, 7.0); self.spin_d.setValue(2.0); self.spin_d.setDecimals(2); self.spin_d.setSingleStep(0.1)
@@ -1006,7 +1011,7 @@ class VeraLuxInterface:
         self.spin_b = QDoubleSpinBox()
         self.spin_b.setToolTip(
             "<b>Highlight Protection (b):</b><br>"
-            "Controls the 'knee' of the GHS curve."
+            "Controls the 'knee' of the Hyperbolic curve."
         )
         self.spin_b.setRange(0.1, 15.0); self.spin_b.setValue(6.0); self.spin_b.setSingleStep(0.1)
         l_manual.addWidget(self.spin_b)
@@ -1232,7 +1237,7 @@ class VeraLuxInterface:
             "                • Processing Mode:\n"
             "                  - \"Ready-to-Use\" (Default): Applies Star-Safe expansion, Linked MTF\n"
             "                    at the end of the pipeline and Highlight Soft-Clip. Export-ready results.\n"
-            "                  - \"Scientific\": Raw GHS stretch. Hard-clip at 1.0. No cosmetic fixes.\n"
+            "                  - \"Scientific\": Raw Hyperbolic stretch. Hard-clip at 1.0. No cosmetic fixes.\n"
             "                    Need for subsequent tone mapping (e.g. curves) in most cases.\n"
             "                    If you use curves, do not touch the black and white points\n"
             "                    so as not to lose precious data!\n"
@@ -1287,7 +1292,7 @@ class VeraLuxInterface:
         if self.radio_ready.isChecked():
             self.label_mode_info.setText("✓ Ready-to-Use: Star-Safe expansion + MTF + Soft Clip")
         else:
-            self.label_mode_info.setText("✓ Scientific: Pure GHS (1.0), preserved vectors, no clip")
+            self.label_mode_info.setText("✓ Scientific: Pure Hyperbolic (1.0), preserved vectors, no clip")
 
     def update_profile_info(self, profile_name):
         if profile_name in SENSOR_PROFILES:
