@@ -8,7 +8,7 @@
 # (c) 2025 Riccardo Paterniti
 # VeraLux — HyperMetric Stretch
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Version 1.2.1
+# Version 1.2.2
 #
 # Credits / Origin
 # ----------------
@@ -118,7 +118,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout
                             QPushButton, QGroupBox, QMessageBox, QProgressBar,
                             QComboBox, QRadioButton, QButtonGroup, QCheckBox, QFrame,
                             QGraphicsView, QGraphicsScene, QGraphicsPixmapItem)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QEvent
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QEvent, QSettings
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QColor, QWheelEvent, QMouseEvent
 
 # ---------------------
@@ -183,10 +183,12 @@ QProgressBar { border: 1px solid #555555; border-radius: 3px; text-align: center
 QProgressBar::chunk { background-color: #285299; width: 10px; }
 """
 
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 # ------------------------------------------------------------------------------
 # VERSION HISTORY
 # ------------------------------------------------------------------------------
+# 1.2.2: UX Upgrade. Added persistent settings (QSettings). VeraLux now remembers
+#        Sensor Profile, Processing Mode, and Target Background between sessions.
 # 1.2.1: Nomenclature refinement. Replaced generic GHS terms with accurate
 #        "Inverse Hyperbolic Stretch" definitions. Minor UI text polish.
 # 1.2.0: Major Upgrade. Added Live Preview Engine with Smart Proxy technology.
@@ -884,6 +886,9 @@ class VeraLuxInterface:
         # Clean Exit handler
         self.window.closeEvent = self.handle_close_event
         
+        # Init Settings (Persistence)
+        self.settings = QSettings("VeraLux", "HyperMetricStretch")
+        
         self.window.setWindowTitle(f"VeraLux v{VERSION}")
         self.app.setStyle("Fusion") 
         self.window.setStyleSheet(DARK_STYLESHEET)
@@ -1111,6 +1116,22 @@ class VeraLuxInterface:
         self.slide_grip.valueChanged.connect(self.trigger_preview_update)
 
         self.update_profile_info(DEFAULT_PROFILE)
+        
+        # --- LOAD SAVED SETTINGS (QSettings) ---
+        # 1. Sensor Profile
+        saved_profile = self.settings.value("sensor_profile", DEFAULT_PROFILE)
+        if saved_profile in SENSOR_PROFILES:
+            self.combo_profile.setCurrentText(saved_profile)
+            
+        # 2. Mode (Default: Ready-to-Use)
+        is_ready = self.settings.value("mode_ready", True, type=bool)
+        if is_ready: self.radio_ready.setChecked(True)
+        else: self.radio_scientific.setChecked(True)
+        
+        # 3. Target Background
+        saved_target = self.settings.value("target_bg", 0.20, type=float)
+        self.spin_target.setValue(saved_target)
+        
         self.window.show()
         self.center_window()
         self.cache_input() # Initial cache
@@ -1214,7 +1235,12 @@ class VeraLuxInterface:
     # --- STANDARD METHODS ---
 
     def handle_close_event(self, event):
-        """Ensures the preview window closes when the main window closes."""
+        """Ensures the preview window closes when the main window closes and saves settings."""
+        # Save Preferences (QSettings)
+        self.settings.setValue("sensor_profile", self.combo_profile.currentText())
+        self.settings.setValue("mode_ready", self.radio_ready.isChecked())
+        self.settings.setValue("target_bg", self.spin_target.value())
+        
         if self.preview_window:
             self.preview_window.close()
         event.accept()
