@@ -98,6 +98,7 @@ focused on maximizing data fidelity through physics-based processing.
 import sys
 import os
 import traceback
+from typing import Any
 
 try:
     import sirilpy as s
@@ -804,6 +805,36 @@ class VeraLuxPreviewWindow(QWidget):
 #  THREADING
 # =============================================================================
 
+def auto_solver_impl(data, target, b_val, luma_weights):
+    """
+    Worker function for AutoSolverThread.
+    Returns best_log_d.
+    """
+    img_norm = VeraLuxCore.normalize_input(data) 
+    if img_norm.ndim == 3 and img_norm.shape[0] != 3 and img_norm.shape[2] == 3:
+        img_norm = img_norm.transpose(2, 0, 1)
+    
+    if img_norm.ndim == 3:
+        h, w = img_norm.shape[1], img_norm.shape[2]
+        num_pixels = h * w
+        indices = np.random.choice(num_pixels, min(num_pixels, 100000), replace=False)
+        c0 = img_norm[0].flatten()[indices]
+        c1 = img_norm[1].flatten()[indices]
+        c2 = img_norm[2].flatten()[indices]
+        sub_data = np.vstack((c0, c1, c2))
+    else:
+        h, w = img_norm.shape
+        num_pixels = h * w
+        indices = np.random.choice(num_pixels, min(num_pixels, 100000), replace=False)
+        sub_data = img_norm.flatten()[indices]
+
+    anchor = VeraLuxCore.calculate_anchor(sub_data)
+    L_anchored, _ = VeraLuxCore.extract_luminance(sub_data, anchor, luma_weights)
+    valid = L_anchored[L_anchored > 1e-7]
+    if len(valid) == 0: return 2.0
+    best_log_d = VeraLuxCore.solve_log_d(valid, target, b_val)
+    return best_log_d
+
 class AutoSolverThread(QThread):
     result_ready = pyqtSignal(float)
     def __init__(self, data, target, b_val, luma_weights):
@@ -811,29 +842,7 @@ class AutoSolverThread(QThread):
         self.data = data; self.target = target; self.b_val = b_val; self.luma_weights = luma_weights
     def run(self):
         try:
-            img_norm = VeraLuxCore.normalize_input(self.data) 
-            if img_norm.ndim == 3 and img_norm.shape[0] != 3 and img_norm.shape[2] == 3:
-                img_norm = img_norm.transpose(2, 0, 1)
-            
-            if img_norm.ndim == 3:
-                h, w = img_norm.shape[1], img_norm.shape[2]
-                num_pixels = h * w
-                indices = np.random.choice(num_pixels, min(num_pixels, 100000), replace=False)
-                c0 = img_norm[0].flatten()[indices]
-                c1 = img_norm[1].flatten()[indices]
-                c2 = img_norm[2].flatten()[indices]
-                sub_data = np.vstack((c0, c1, c2))
-            else:
-                h, w = img_norm.shape
-                num_pixels = h * w
-                indices = np.random.choice(num_pixels, min(num_pixels, 100000), replace=False)
-                sub_data = img_norm.flatten()[indices]
-
-            anchor = VeraLuxCore.calculate_anchor(sub_data)
-            L_anchored, _ = VeraLuxCore.extract_luminance(sub_data, anchor, self.luma_weights)
-            valid = L_anchored[L_anchored > 1e-7]
-            if len(valid) == 0: best_log_d = 2.0
-            else: best_log_d = VeraLuxCore.solve_log_d(valid, self.target, self.b_val)
+            best_log_d = auto_solver_impl(self.data, self.target, self.b_val, self.luma_weights)
             self.result_ready.emit(best_log_d)
         except Exception as e:
             print(f"Solver Error: {e}")
@@ -1392,6 +1401,7 @@ def main():
     try:
         app = QApplication.instance()
         if not app:
+            # Temporarily remove sys.argv
             app = QApplication(sys.argv)
         siril = s.SirilInterface()
         gui = VeraLuxInterface(siril, app)
@@ -1402,3 +1412,43 @@ def main():
 
 if __name__ == "__main__":
     main()
+elif __name__ == "__starbash_script__":
+    # FIXME: works surprisingly well, but we don't need it now
+    # main()
+
+    def cameraid_to_workingspace(camera_id: str) -> str:
+        # A crude auto mapping from FITS extracted camera IDs (i.e. ASI2600 or Seestar S50 to ws names)
+        default = "Rec.709 (Recommended)"
+
+        import re
+        # Find all patterns of letters followed immediately by numbers (e.g., "S50", "ASI2600")
+        matches = re.findall(r'[A-Za-z]+\d+', camera_id)
+        if not matches:
+            return default
+        # Try each match to see if it appears in any SENSOR_PROFILES key
+        for model_pattern in matches:
+            for key in SENSOR_PROFILES.keys():
+                if model_pattern in key:
+                    return key
+        return default
+
+
+    def starbash_main() -> None:
+        siril = s.SirilInterface()
+        linear_cache = siril.get_image_pixeldata()
+        
+        ws = cameraid_to_workingspace(context["default_metadata"]["INSTRUME"])
+        b= 6.0
+        # Note: "context" is injected by Starbash - contains run info and parameters
+        tgt = context["parameters"].hms_background
+        luma = SENSOR_PROFILES[ws]['weights']
+        D = auto_solver_impl(linear_cache, tgt, b, luma)
+
+        img_copy = linear_cache.copy()
+        conv = 3.5
+        mode = "ready_to_use"
+        grip = 1.0
+        final = process_veralux_v6(img_copy, D, b, conv, ws, mode, tgt, grip)
+        siril.set_image_pixeldata(final)
+
+    starbash_main()

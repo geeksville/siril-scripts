@@ -1,0 +1,44 @@
+
+[repo]
+kind = "recipe"
+
+[recipe]
+# Note: this experiment is mostly Riccardo's code, starbash toml file and some tweaks in the py file excluded...
+author.name = "Riccardo Paterniti"
+author.email = "info@veralux.space"
+
+[[parameters]]
+name = "hms_background"
+default = 0.21 # Value used if not overriden
+description = "What background level should be targeted for VeraLux HyperMetric Stretch"
+
+[[stages]]
+
+# this stage is considered if the previous stage in this same array
+# was run.  It must be run inside the same tempdir (so that files from previous stage are available)
+
+name = "veralux"
+description = "Do VeraLux HyperMetric Stretching"
+tool.name = "python"
+
+# if not specified starbash.py used
+script-file = "VeraLux_HyperMetric_Stretch.py"
+
+[[stages.inputs]]
+kind = "job"
+after = "background.*" # the name of the step we want to follow
+
+[[stages.inputs.requires]]
+kind = "min_count"
+value = 1          # At this point if we don't have any valid inputs, reject this stage from consideration
+
+# Based on the following definitions in the stage toml file...
+# Note: outputs will be prefilled in the context so that the script can use them
+[[stages.outputs]]
+# the 'processed' output points to a directory in the 'processed' repo but named based on the target we are trying to build for
+# see above for a rule that automatically populates the results_dir shorthand
+kind = "processed"
+
+# if used: Generated output filenames will be based on the input filename, but with this prefix
+auto.prefix = "hms_"
+
