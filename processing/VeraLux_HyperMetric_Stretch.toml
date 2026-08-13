@@ -27,6 +27,7 @@ script-file = "VeraLux_HyperMetric_Stretch.py"
 [[stages.inputs]]
 kind = "job"
 after = "background.*" # the name of the step we want to follow
+multiplex = true # one task per upstream file, so multi-file stacks (e.g. Ha/OIII) each get stretched
 
 [[stages.inputs.requires]]
 kind = "min_count"
