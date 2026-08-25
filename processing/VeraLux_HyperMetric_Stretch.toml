@@ -33,6 +33,11 @@ multiplex = true # one task per upstream file, so multi-file stacks (e.g. Ha/OII
 kind = "min_count"
 value = 1          # At this point if we don't have any valid inputs, reject this stage from consideration
 
+[[stages.inputs.requires]]
+kind = "filename"
+value = "starmask"
+mode = "exclude" # exclude any starmask files from consideration
+
 # Based on the following definitions in the stage toml file...
 # Note: outputs will be prefilled in the context so that the script can use them
 [[stages.outputs]]
