@@ -1440,7 +1440,7 @@ elif __name__ == "__starbash_script__":
         ws = cameraid_to_workingspace(context["default_metadata"]["INSTRUME"])
         b= 6.0
         # Note: "context" is injected by Starbash - contains run info and parameters
-        tgt = context["parameters"].hms_background
+        tgt = context["parameters"].background
         luma = SENSOR_PROFILES[ws]['weights']
         D = auto_solver_impl(linear_cache, tgt, b, luma)
 

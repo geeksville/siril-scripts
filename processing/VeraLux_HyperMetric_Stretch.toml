@@ -7,11 +7,6 @@ kind = "recipe"
 author.name = "Riccardo Paterniti"
 author.email = "info@veralux.space"
 
-[[parameters]]
-name = "hms_background"
-default = 0.10 # Value used if not overriden
-description = "What background level should be targeted for VeraLux HyperMetric Stretch"
-
 [[stages]]
 
 # this stage is considered if the previous stage in this same array
@@ -47,4 +42,10 @@ kind = "processed"
 
 # if used: Generated output filenames will be based on the input filename, but with this prefix
 auto.prefix = "hms_"
+
+
+[[stages.parameters]]
+name = "background"
+default = 0.10 # Value used if not overriden
+description = "What background level should be targeted for VeraLux HyperMetric Stretch"
 
