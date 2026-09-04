@@ -21,7 +21,7 @@ script-file = "VeraLux_HyperMetric_Stretch.py"
 
 [[stages.inputs]]
 kind = "job"
-after = "(starnet|noise_exterminator).*" # the name of the step we want to follow (FIXME was after background)
+after = "(starnet).*" # the name of the step we want to follow (FIXME was after background)
 multiplex = true # one task per upstream file, so multi-file stacks (e.g. Ha/OIII) each get stretched
 
 [[stages.inputs.requires]]
