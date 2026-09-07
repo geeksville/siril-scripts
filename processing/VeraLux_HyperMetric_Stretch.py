@@ -1,3 +1,5 @@
+# pyright: reportUndefinedVariable=false
+
 ##############################################
 # VeraLux — HyperMetric Stretch
 # Photometric Hyperbolic Stretch Engine
@@ -1438,16 +1440,23 @@ elif __name__ == "__starbash_script__":
         linear_cache = siril.get_image_pixeldata()
         
         ws = cameraid_to_workingspace(context["default_metadata"]["INSTRUME"])
-        b= 6.0
-        # Note: "context" is injected by Starbash - contains run info and parameters
-        tgt = context["parameters"].background
+        # Stage parameters are resolved into context["parameters"] by Starbash.
+        params = context["parameters"]
+        tgt = params.background
+        b = params.protect_b
+        conv = params.star_recovery
+        grip = params.color_grip
+
         luma = SENSOR_PROFILES[ws]['weights']
-        D = auto_solver_impl(linear_cache, tgt, b, luma)
+        # log_d <= 0.0 means "auto-calculate" from the background target;
+        # otherwise use the configured stretch intensity directly.
+        if params.log_d <= 0.0:
+            D = auto_solver_impl(linear_cache, tgt, b, luma)
+        else:
+            D = params.log_d
 
         img_copy = linear_cache.copy()
-        conv = 3.5
         mode = "ready_to_use"
-        grip = 1.0
         final = process_veralux_v6(img_copy, D, b, conv, ws, mode, tgt, grip)
         siril.set_image_pixeldata(final)
 

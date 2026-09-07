@@ -49,3 +49,23 @@ name = "background"
 default = 0.10 # Value used if not overriden
 description = "What background level should be targeted for VeraLux HyperMetric Stretch"
 
+[[stages.parameters]]
+name = "log_d"
+default = 0.0 # 0.0 means auto-calculate from the background target
+description = "Stretch (Log D): hyperbolic intensity. Higher = brighter midtones."
+
+[[stages.parameters]]
+name = "protect_b"
+default = 6.0
+description = "Highlight Protection (b): controls the stretch curve 'knee'. Higher (>6.0) protects stars from bloating; lower (<2.0) gives brighter highlights but risks bloating."
+
+[[stages.parameters]]
+name = "star_recovery"
+default = 3.5
+description = "Star Recovery (White Point): color convergence. Determines how fast a saturated core fades to pure white; increase to fix 'donut' artifacts or holes in stars."
+
+[[stages.parameters]]
+name = "color_grip"
+default = 1.0
+description = "Color Grip: vector strictness in highlights. 1.0 = pure vector (vivid); < 1.0 = hybrid (softer stars)."
+
